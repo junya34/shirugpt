@@ -1,0 +1,84 @@
+# ---------------------------------------------------------------
+# 認証情報・シークレット（絶対にコミットしない）
+# ---------------------------------------------------------------
+.env
+.env.*
+!.env.example
+
+# 認証情報ディレクトリ（サービスアカウントキーの置き場）
+credentials/
+credential/
+.credentials/
+
+# GCP サービスアカウントキー等
+gcp-secret-key.json
+*-key.json
+*secret*.json
+*_key.json
+key*.json
+keyfile*.json
+credentials*.json
+client_secret*.json
+service-account*.json
+service_account*.json
+sa-*.json
+gcp-*.json
+application_default_credentials.json
+adc.json
+keys/
+secrets/
+*.pem
+*.p12
+*.pfx
+
+# ---------------------------------------------------------------
+# Python
+# ---------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# ---------------------------------------------------------------
+# 仮想環境
+# ---------------------------------------------------------------
+.venv/
+venv/
+env/
+ENV/
+.python-version
+
+# ---------------------------------------------------------------
+# Streamlit
+# ---------------------------------------------------------------
+.streamlit/secrets.toml
+
+# ---------------------------------------------------------------
+# 抽出データ（顧客データが含まれうるため除外）
+# ---------------------------------------------------------------
+data/
+exports/
+*.csv
+*.tsv
+*.parquet
+*.xlsx
+
+# ---------------------------------------------------------------
+# エディタ / OS / ツール
+# ---------------------------------------------------------------
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*~
+.ipynb_checkpoints/
+.claude/settings.local.json
