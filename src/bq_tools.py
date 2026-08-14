@@ -294,6 +294,32 @@ def friendly_error(exc: Exception) -> str:
     if isinstance(exc, (SQLGuardError, BQToolError)):
         return str(exc)
 
+    text = str(exc)
+
+    # API 未有効化（初回セットアップで頻出）
+    if "has not been used in project" in text or "SERVICE_DISABLED" in text:
+        api = "必要な API"
+        if "aiplatform" in text:
+            api = "Vertex AI API (aiplatform.googleapis.com)"
+        elif "bigquery" in text:
+            api = "BigQuery API (bigquery.googleapis.com)"
+        return (
+            f"{api} が GCP プロジェクトで有効化されていません。\n\n"
+            "次のコマンドで有効化してから、数分待って再度お試しください。\n\n"
+            "```\n"
+            "gcloud services enable aiplatform.googleapis.com bigquery.googleapis.com \\\n"
+            "  --project <プロジェクトID>\n"
+            "```"
+        )
+
+    # サービスアカウントに必要なロールが無い
+    if "aiplatform.endpoints.predict" in text or "aiplatform.user" in text:
+        return (
+            "Vertex AI を呼び出す権限がありません。"
+            "使用中のアカウントに「Vertex AI ユーザー」"
+            "(roles/aiplatform.user) を付与してください。"
+        )
+
     if isinstance(exc, gexc.NotFound):
         return (
             "参照先のテーブルまたはデータセットが見つかりませんでした。"
