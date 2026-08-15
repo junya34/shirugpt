@@ -283,7 +283,7 @@ def render_confirmation(
 # --------------------------------------------------------------------
 def main() -> None:
     st.title("📊 ShiruGPT")
-    st.caption("BigQuery のデータを日本語で質問できる分析アシスタント（プロトタイプ）")
+    st.caption("SHIRUCAFEデータの可視化・分析AI")
 
     try:
         settings, tools, agent = build_runtime()
@@ -318,8 +318,7 @@ def main() -> None:
     if not prompt:
         if not st.session_state.messages and pending is None:
             st.info(
-                "まずは「どんなテーブルがありますか？」と聞いてみてください。"
-                "許可されたデータセット内のテーブルを調べて回答します。"
+                "プロトタイプ版です。AIは必ずしも正しい回答を返すとは限りません。"
             )
         return
 
