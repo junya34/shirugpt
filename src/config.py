@@ -16,6 +16,59 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 load_dotenv(REPO_ROOT / ".env")
 
+_BRIDGED_KEYS = (
+    "GCP_PROJECT_ID",
+    "BQ_LOCATION",
+    "BQ_DEFAULT_DATASET",
+    "BQ_ALLOWED_DATASETS",
+    "VERTEX_LOCATION",
+    "GEMINI_MODEL",
+    "GEMINI_THINKING_BUDGET",
+    "DRY_RUN_CONFIRM_BYTES",
+    "MAX_BYTES_BILLED",
+    "DEFAULT_ROW_LIMIT",
+    "MAX_RESULT_ROWS",
+    "SAMPLE_ROWS",
+    "MAX_TOOL_ITERATIONS",
+)
+
+
+def bridge_streamlit_secrets() -> None:
+    """Streamlit Community Cloud の st.secrets を環境変数へ橋渡しする。
+
+    ローカル開発では secrets.toml が存在せず st.secrets へのアクセス自体が
+    例外になるため、その場合は何もせず既存の .env ベースの読み込みに
+    フォールバックする。load_settings() より前に呼ぶこと。
+
+    サービスアカウントキーの中身はここでも一切ログに出さない。
+    Streamlit Cloud の secrets 画面に貼られた JSON 文字列を、そのまま
+    一時ファイルへ書き出して GOOGLE_APPLICATION_CREDENTIALS に渡すだけ。
+    """
+    try:
+        import streamlit as st
+
+        secrets = st.secrets
+        available = list(secrets.keys())
+    except Exception:
+        return  # secrets.toml が無い＝ローカル開発。何もしない
+
+    for key in _BRIDGED_KEYS:
+        if key in available and not os.getenv(key):
+            os.environ[key] = str(secrets[key])
+
+    if "GCP_SERVICE_ACCOUNT_JSON" in available and not os.getenv(
+        "GOOGLE_APPLICATION_CREDENTIALS"
+    ):
+        import json
+        import tempfile
+
+        raw = secrets["GCP_SERVICE_ACCOUNT_JSON"]
+        parsed = json.loads(raw) if isinstance(raw, str) else dict(raw)
+        fd, path = tempfile.mkstemp(prefix="gcp-sa-", suffix=".json")
+        with os.fdopen(fd, "w") as f:
+            json.dump(parsed, f)
+        os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = path
+
 
 class ConfigError(RuntimeError):
     """.env の設定が不足・不正なときに送出する。"""

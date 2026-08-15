@@ -22,12 +22,17 @@ from src.charts import KIND_LABELS, ChartSpec, suggest_chart
 from src.config import (
     ConfigError,
     Settings,
+    bridge_streamlit_secrets,
     credentials_leak_warning,
     human_bytes,
     load_settings,
 )
 
 st.set_page_config(page_title="ShiruGPT", page_icon="📊", layout="wide")
+
+# Streamlit Community Cloud では .env が無いため、st.secrets から環境変数へ
+# 橋渡しする。ローカル開発では secrets.toml が無く何もしないため無害。
+bridge_streamlit_secrets()
 
 AUTH_HELP = """\
 GCP の認証情報が見つからないか、権限が不足しています。ターミナルで次を実行してください。
