@@ -52,6 +52,9 @@ Streamlit の UI（`app.py`）が Gemini の Function Calling ループ（`src/a
   `QueryRun.dataframe` は UI 専用、`QueryRun.summary` だけが Gemini 向け。
 - 取得済みスキーマと実行済み SQL は `ToolContext` にキャッシュされる。
   同一会話での再取得・再課金を防いでいる。
+- `src/charts.py` のグラフ推定も**サーバー側で完結させる**。列の dtype だけで
+  種類と軸を決めており、Gemini には一切問い合わせない。グラフのために
+  データやスキーマを Gemini 境界の向こうへ送らないこと。
 
 ### 中断と再開（確認フロー）
 

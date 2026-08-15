@@ -18,6 +18,7 @@ from src.agent import (
     ToolContext,
 )
 from src.bq_tools import BigQueryTools, QueryRun, friendly_error
+from src.charts import KIND_LABELS, ChartSpec, suggest_chart
 from src.config import (
     ConfigError,
     Settings,
@@ -69,6 +70,72 @@ def reset_conversation(settings: Settings, tools: BigQueryTools) -> None:
 # --------------------------------------------------------------------
 # 表示
 # --------------------------------------------------------------------
+CHART_FUNCS = {
+    "bar": st.bar_chart,
+    "line": st.line_chart,
+    "area": st.area_chart,
+    "scatter": st.scatter_chart,
+}
+
+
+def render_table(run: QueryRun, idx: int, msg_idx: int) -> None:
+    rows = len(run.dataframe)
+    st.dataframe(run.dataframe, width="stretch", height=min(400, 60 + rows * 35))
+    st.download_button(
+        "結果を CSV でダウンロード",
+        data=run.dataframe.to_csv(index=False).encode("utf-8-sig"),
+        file_name=f"result_{msg_idx}_{idx}.csv",
+        mime="text/csv",
+        key=f"dl_{msg_idx}_{idx}",
+    )
+
+
+def render_chart(df, spec: ChartSpec, key_prefix: str) -> None:
+    kinds = list(KIND_LABELS)
+    col1, col2, col3 = st.columns([2, 3, 4])
+    kind = col1.selectbox(
+        "種類",
+        options=kinds,
+        index=kinds.index(spec.kind),
+        format_func=lambda k: KIND_LABELS[k],
+        key=f"{key_prefix}_kind",
+    )
+    x = col2.selectbox(
+        "X 軸",
+        options=spec.candidates_x,
+        index=spec.candidates_x.index(spec.x) if spec.x in spec.candidates_x else 0,
+        key=f"{key_prefix}_x",
+    )
+    y_options = [c for c in spec.candidates_y if c != x]
+    if not y_options:
+        st.info("Y 軸に使える数値列がありません。X 軸を変更してください。")
+        return
+    y = col3.multiselect(
+        "Y 軸（数値列）",
+        options=y_options,
+        default=[c for c in spec.y if c in y_options] or y_options[:1],
+        key=f"{key_prefix}_y",
+    )
+    if not y:
+        st.info("Y 軸の列を 1 つ以上選んでください。")
+        return
+
+    kwargs = {"x": x, "y": y}
+    if kind == "bar":
+        # SQL 側の ORDER BY を尊重する（既定では X 軸で並べ替えられてしまう）
+        kwargs["sort"] = False
+    try:
+        CHART_FUNCS[kind](df, **kwargs)
+    except Exception:  # noqa: BLE001 - 描画不能な組み合わせは表にフォールバック
+        st.warning(
+            "この列の組み合わせではグラフを描画できませんでした。"
+            "軸の指定を変えるか「表」タブをご覧ください。"
+        )
+        return
+    if spec.reason:
+        st.caption(spec.reason)
+
+
 def render_run(run: QueryRun, idx: int, msg_idx: int) -> None:
     rows = len(run.dataframe)
     label = f"実行した SQL — {rows:,} 行 / スキャン {human_bytes(run.estimated_bytes)}"
@@ -79,17 +146,20 @@ def render_run(run: QueryRun, idx: int, msg_idx: int) -> None:
         if run.billed_bytes:
             st.caption(f"課金対象バイト: {human_bytes(run.billed_bytes)}")
 
-    if rows:
-        st.dataframe(run.dataframe, width="stretch", height=min(400, 60 + rows * 35))
-        st.download_button(
-            "結果を CSV でダウンロード",
-            data=run.dataframe.to_csv(index=False).encode("utf-8-sig"),
-            file_name=f"result_{msg_idx}_{idx}.csv",
-            mime="text/csv",
-            key=f"dl_{msg_idx}_{idx}",
-        )
-    else:
+    if not rows:
         st.info("このクエリの結果は 0 件でした。")
+        return
+
+    spec = suggest_chart(run.dataframe)
+    if spec is None:
+        render_table(run, idx, msg_idx)
+        return
+
+    tab_chart, tab_table = st.tabs(["グラフ", "表"])
+    with tab_chart:
+        render_chart(run.dataframe, spec, f"chart_{msg_idx}_{idx}")
+    with tab_table:
+        render_table(run, idx, msg_idx)
 
 
 def render_message(message: dict[str, Any], msg_idx: int) -> None:
