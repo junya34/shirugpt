@@ -329,7 +329,25 @@ Gemini には技術的詳細を渡します。エラー内容が分からない�
 
 # セットアップ
 
-## 1. 依存パッケージ
+## 1. リポジトリの取得
+
+初めて使う場合は clone します。
+
+```bash
+git clone https://github.com/junya34/shirugpt.git
+```
+
+```bash
+cd shirugpt
+```
+
+既に手元にある場合は、最新の変更を取り込みます。
+
+```bash
+git pull origin main
+```
+
+## 2. 依存パッケージ
 
 Python 3.11 以上が必要です。
 
@@ -341,7 +359,7 @@ python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 ```
 
-## 2. GCP 側の準備
+## 3. GCP 側の準備
 
 対象プロジェクトで以下の API を有効化してください。
 
@@ -362,11 +380,12 @@ gcloud services enable bigquery.googleapis.com aiplatform.googleapis.com --proje
 | クエリジョブの実行 | `roles/bigquery.jobUser` |
 | Gemini の呼び出し | `roles/aiplatform.user`（Vertex AI ユーザー） |
 
-## 3. 認証
+## 4. 認証
 
-認証方式は 2 つあります。**ローカル開発では方式 A を推奨します。**
+認証方式は 2 つあります。開発者本人は方式 A（ADC）を推奨しますが、
+同僚が手元で動かす場合は、共有された鍵を使う方式 B が簡単です。
 
-### 方式 A: Application Default Credentials（推奨）
+### 方式 A: Application Default Credentials（開発者本人向け・推奨）
 
 ```bash
 gcloud auth application-default login
@@ -378,17 +397,35 @@ gcloud auth application-default set-quota-project <プロジェクトID>
 
 `.env` の `GOOGLE_APPLICATION_CREDENTIALS` は**空のまま**にしてください。
 
-### 方式 B: サービスアカウントキー
+### 方式 B: サービスアカウントキー（同僚が手元で動かす場合）
 
-鍵ファイルを `credentials/` 配下に置き、`.env` にそのパスを書きます。
+サービスアカウントキー（`gcp-secret-key.json`）は共有されている Google Drive の
+「confidentials」フォルダに置いてあります。次の手順で配置してください。
 
-```
-GOOGLE_APPLICATION_CREDENTIALS=credentials/gcp-secret-key.json
-```
+1. Google Drive の「confidentials」フォルダから `gcp-secret-key.json` をダウンロードする
+2. リポジトリ直下に `credentials/` ディレクトリを作り、その中に置く
+
+   ```bash
+   mkdir -p credentials
+   ```
+
+   ```
+   shirugpt/
+   └── credentials/
+       └── gcp-secret-key.json   ← ここに配置
+   ```
+
+3. `.env` にパスを書く
+
+   ```
+   GOOGLE_APPLICATION_CREDENTIALS=credentials/gcp-secret-key.json
+   ```
 
 `credentials/` と `*-key.json` などは `.gitignore` 済みです。
 起動時にも「鍵ファイルが git 管理外になっているか」を `git check-ignore` で
 自動チェックし、除外されていない場合は画面上に警告を表示します。
+**鍵ファイルはリポジトリにコミットしないでください。** 公開リポジトリのため、
+`git status` で `credentials/` が追跡対象に出てこないことを起動前に確認してください。
 
 ### なぜ ADC を推奨するのか
 
@@ -403,7 +440,7 @@ GOOGLE_APPLICATION_CREDENTIALS=credentials/gcp-secret-key.json
 バックアップ経由での流出が事故の典型です。**公開リポジトリを使う本プロジェクトでは
 ADC のほうがリスクがはるかに小さくなります。**
 
-## 4. `.env` の作成
+## 5. `.env` の作成
 
 ```bash
 cp .env.example .env
@@ -411,7 +448,7 @@ cp .env.example .env
 
 | 変数 | 既定値 | 説明 |
 |---|---|---|
-| `GOOGLE_APPLICATION_CREDENTIALS` | （空） | SA キーのパス。空なら ADC を使用 |
+| `GOOGLE_APPLICATION_CREDENTIALS` | （空） | SA キーのパス（`credentials/gcp-secret-key.json` 等）。空なら ADC を使用 |
 | `GCP_PROJECT_ID` | — | 対象 GCP プロジェクト ID（必須） |
 | `BQ_LOCATION` | （空） | データセットのロケーション（例 `US`, `asia-northeast1`）。空なら自動 |
 | `BQ_DEFAULT_DATASET` | `202506` | 既定のデータセット |
@@ -429,7 +466,7 @@ cp .env.example .env
 すべて `.env` 由来で、コードにハードコードされている値はありません。
 テーブル名やカラム構成も埋め込まず、実行時に動的取得します。
 
-## 5. 起動
+## 6. 起動
 
 ```bash
 .venv/bin/streamlit run app.py --server.address 127.0.0.1
