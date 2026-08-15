@@ -55,13 +55,18 @@ python3 -m venv .venv
 gcloud services enable bigquery.googleapis.com aiplatform.googleapis.com --project <プロジェクトID>
 ```
 
+> **API 名称について**: Gemini 呼び出しに使う API は、GCP コンソール上では
+> **Agent Platform API**（旧 Vertex AI API）と表示されます。サービス名は
+> `aiplatform.googleapis.com` のままなので、上記コマンドはそのまま使えます。
+> 有効化直後は反映に数分かかることがあります。
+
 実行者に必要なロール:
 
 | 用途 | ロール |
 |---|---|
 | BigQuery のデータ読み取り | `roles/bigquery.dataViewer` |
 | クエリジョブの実行 | `roles/bigquery.jobUser` |
-| Gemini の呼び出し | `roles/aiplatform.user` |
+| Gemini の呼び出し | `roles/aiplatform.user`（Vertex AI ユーザー） |
 
 ### 3. 認証
 
@@ -117,7 +122,7 @@ cp .env.example .env
 | `BQ_LOCATION` | （空） | データセットのロケーション（例 `US`, `asia-northeast1`）。空なら自動 |
 | `BQ_DEFAULT_DATASET` | `202506` | 既定のデータセット |
 | `BQ_ALLOWED_DATASETS` | `202506` | **アクセスを許可するデータセットのallowlist**（カンマ区切り） |
-| `VERTEX_LOCATION` | `us-central1` | Vertex AI のリージョン |
+| `VERTEX_LOCATION` | `us-central1` | Gemini を呼ぶリージョン（Agent Platform / 旧 Vertex AI） |
 | `GEMINI_MODEL` | `gemini-2.5-flash` | 使用モデル |
 | `GEMINI_THINKING_BUDGET` | （空） | 思考トークン予算。空でモデル既定、`0` で無効 |
 | `DRY_RUN_CONFIRM_BYTES` | `1073741824`（1GB） | 推定スキャン量がこれを超えたら実行前に確認 |
@@ -130,10 +135,15 @@ cp .env.example .env
 ### 5. 起動
 
 ```bash
-.venv/bin/streamlit run app.py
+.venv/bin/streamlit run app.py --server.address 127.0.0.1
 ```
 
 ブラウザで `http://localhost:8501` が開きます。
+
+> `--server.address 127.0.0.1` を付けないと、Streamlit は既定で全ネットワーク
+> インターフェースを待ち受け、同一 LAN 上の他端末から BigQuery のデータが
+> 見える状態になります。本アプリには利用者認証がないため、ループバックに
+> 限定して起動してください。
 
 ---
 

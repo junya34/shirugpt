@@ -299,8 +299,10 @@ def friendly_error(exc: Exception) -> str:
     # API 未有効化（初回セットアップで頻出）
     if "has not been used in project" in text or "SERVICE_DISABLED" in text:
         api = "必要な API"
-        if "aiplatform" in text:
-            api = "Vertex AI API (aiplatform.googleapis.com)"
+        if "aiplatform" in text or "Agent Platform" in text:
+            # コンソール上の表示名は Agent Platform API（旧 Vertex AI API）。
+            # サービス名は aiplatform.googleapis.com のまま
+            api = "Agent Platform API（旧 Vertex AI API / aiplatform.googleapis.com）"
         elif "bigquery" in text:
             api = "BigQuery API (bigquery.googleapis.com)"
         return (
@@ -315,7 +317,7 @@ def friendly_error(exc: Exception) -> str:
     # サービスアカウントに必要なロールが無い
     if "aiplatform.endpoints.predict" in text or "aiplatform.user" in text:
         return (
-            "Vertex AI を呼び出す権限がありません。"
+            "Gemini を呼び出す権限がありません。"
             "使用中のアカウントに「Vertex AI ユーザー」"
             "(roles/aiplatform.user) を付与してください。"
         )

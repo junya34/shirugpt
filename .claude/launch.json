@@ -1,0 +1,20 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "shirugpt",
+      "runtimeExecutable": ".venv/bin/streamlit",
+      "runtimeArgs": [
+        "run",
+        "app.py",
+        "--server.port",
+        "8501",
+        "--server.address",
+        "127.0.0.1",
+        "--server.headless",
+        "true"
+      ],
+      "port": 8501
+    }
+  ]
+}
