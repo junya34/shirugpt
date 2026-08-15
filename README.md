@@ -399,10 +399,11 @@ gcloud auth application-default set-quota-project <プロジェクトID>
 
 ### 方式 B: サービスアカウントキー（同僚が手元で動かす場合）
 
-サービスアカウントキー（`gcp-secret-key.json`）は共有されている Google Drive の
-「confidentials」フォルダに置いてあります。次の手順で配置してください。
+サービスアカウントキー（`gcp-secret-key.json`）は、共有されている Google Drive の
+[credentials フォルダ](https://drive.google.com/drive/folders/1S0DochaRO3HwDqqclTJZVR-B9UEPRdEw?usp=drive_link)
+に置いてあります。次の手順で配置してください。
 
-1. Google Drive の「confidentials」フォルダから `gcp-secret-key.json` をダウンロードする
+1. 上記の Google Drive フォルダから `gcp-secret-key.json` をダウンロードする
 2. リポジトリ直下に `credentials/` ディレクトリを作り、その中に置く
 
    ```bash
