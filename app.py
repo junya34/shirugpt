@@ -201,6 +201,7 @@ def render_run(run: QueryRun, idx: int, msg_idx: int) -> None:
             st.caption(f"ℹ️ {note}")
         if run.billed_bytes:
             st.caption(f"実行クエリ量: {human_bytes(run.billed_bytes)}")
+            st.caption(f"結果件数: {rows:,} 件")
 
     if not rows:
         st.info("このクエリの結果は 0 件でした。")
@@ -227,7 +228,7 @@ def render_message(message: dict[str, Any], msg_idx: int) -> None:
 
         tool_calls = message.get("tool_calls") or []
         if tool_calls:
-            with st.expander(f"実行したツール（{len(tool_calls)} 回）"):
+            with st.expander(f"実行したツール（{len(tool_calls)} 個）"):
                 for call in tool_calls:
                     st.markdown(f"- `{call}`")
 
@@ -396,7 +397,7 @@ def main() -> None:
         render_confirmation(pending, agent, ctx)
 
     prompt = st.chat_input(
-        "データについて質問してください（例: 来店データの件数を教えて）",
+        "データについて質問してください（例: 〇〇店の参加率の推移をグラフで見せて）",
         disabled=pending is not None,
     )
     if not prompt:
@@ -414,7 +415,7 @@ def main() -> None:
 
     with st.chat_message("user"):
         st.markdown(prompt)
-    with st.spinner("BigQuery を調べています…"):
+    with st.spinner("データベースを調べています…"):
         process_turn(agent, ctx)
 
 
