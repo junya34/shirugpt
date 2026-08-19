@@ -289,8 +289,8 @@ def render_sidebar(settings: Settings, ctx: ToolContext, tools: BigQueryTools) -
         st.caption(
             f"会話をリセットするまでの累計です。Gemini の金額は "
             f"{GEMINI_PRICE_AS_OF} 時点のレート"
-            f"（入力 {"$"}{GEMINI_INPUT_PRICE_PER_1M_USD}/100万トークン、"
-            f"出力 {"$"}{GEMINI_OUTPUT_PRICE_PER_1M_USD}/100万トークン）による概算です。"
+            rf"（入力 \${GEMINI_INPUT_PRICE_PER_1M_USD}/100万トークン、"
+            rf"出力 \${GEMINI_OUTPUT_PRICE_PER_1M_USD}/100万トークン）による概算です。"
         )
         st.divider()
         if st.button("会話をリセット", width="stretch"):
