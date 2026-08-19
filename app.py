@@ -6,6 +6,9 @@
 
 from __future__ import annotations
 
+import json
+import os
+import tempfile
 from typing import Any
 
 import streamlit as st
@@ -42,8 +45,56 @@ gcloud auth application-default set-quota-project <プロジェクトID>
 # --------------------------------------------------------------------
 # 初期化
 # --------------------------------------------------------------------
+_SECRET_ENV_KEYS = (
+    "GCP_PROJECT_ID",
+    "BQ_LOCATION",
+    "BQ_DEFAULT_DATASET",
+    "BQ_ALLOWED_DATASETS",
+    "VERTEX_LOCATION",
+    "GEMINI_MODEL",
+    "GEMINI_THINKING_BUDGET",
+    "DRY_RUN_CONFIRM_BYTES",
+    "MAX_BYTES_BILLED",
+    "DEFAULT_ROW_LIMIT",
+    "MAX_RESULT_ROWS",
+    "SAMPLE_ROWS",
+    "MAX_TOOL_ITERATIONS",
+)
+
+
+def _bootstrap_secrets() -> None:
+    """Streamlit Cloud の Secrets を環境変数へ写す。
+
+    ローカルでは secrets.toml が存在しないため st.secrets へのアクセスが
+    例外になる。その場合は何もせず .env 由来の設定に委ねる。
+    サービスアカウントキーは中身を検査せずそのまま一時ファイルへ書き出し、
+    パスだけを GOOGLE_APPLICATION_CREDENTIALS に渡す（config.py の
+    「パスしか扱わない」設計はそのまま維持する）。
+    """
+    try:
+        secrets = dict(st.secrets)
+    except Exception:
+        return
+
+    for key in _SECRET_ENV_KEYS:
+        if key in secrets and not os.getenv(key):
+            os.environ[key] = str(secrets[key])
+
+    if "gcp_service_account" in secrets and not os.getenv(
+        "GOOGLE_APPLICATION_CREDENTIALS"
+    ):
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".json", delete=False
+        ) as f:
+            json.dump(dict(secrets["gcp_service_account"]), f)
+            key_path = f.name
+        os.chmod(key_path, 0o600)
+        os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = key_path
+
+
 @st.cache_resource(show_spinner=False)
 def build_runtime() -> tuple[Settings, BigQueryTools, GeminiAgent]:
+    _bootstrap_secrets()
     settings = load_settings()
     return settings, BigQueryTools(settings), GeminiAgent(settings)
 
