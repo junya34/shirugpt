@@ -194,7 +194,7 @@ def render_chart(df, spec: ChartSpec, key_prefix: str) -> None:
 
 def render_run(run: QueryRun, idx: int, msg_idx: int) -> None:
     rows = len(run.dataframe)
-    label = f"実行した SQL — {rows:,} 行"
+    label = f"実行した SQL — {run.purpose}" if run.purpose else "実行した SQL"
     with st.expander(label):
         st.code(run.sql, language="sql")
         for note in run.notes:
@@ -225,12 +225,6 @@ def render_message(message: dict[str, Any], msg_idx: int) -> None:
             st.warning(message["text"])
         else:
             st.markdown(message["text"])
-
-        tool_calls = message.get("tool_calls") or []
-        if tool_calls:
-            with st.expander(f"実行したツール（{len(tool_calls)} 個）"):
-                for call in tool_calls:
-                    st.markdown(f"- `{call}`")
 
         errors = message.get("errors") or []
         if errors:
@@ -315,7 +309,6 @@ def process_turn(agent: GeminiAgent, ctx: ToolContext) -> None:
                 "role": "assistant",
                 "text": friendly_error(exc),
                 "runs": list(ctx.turn_runs),
-                "tool_calls": list(ctx.turn_tool_calls),
                 "errors": list(ctx.turn_errors),
                 "is_error": True,
             }
@@ -333,7 +326,6 @@ def process_turn(agent: GeminiAgent, ctx: ToolContext) -> None:
                 "role": "assistant",
                 "text": result.text,
                 "runs": list(ctx.turn_runs),
-                "tool_calls": list(ctx.turn_tool_calls),
                 "errors": list(ctx.turn_errors),
             }
         )

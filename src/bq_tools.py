@@ -54,6 +54,7 @@ class QueryRun:
     summary: dict[str, Any]
     notes: list[str] = field(default_factory=list)
     truncated: bool = False
+    purpose: str = ""
 
 
 def _flatten_schema(
@@ -223,7 +224,9 @@ class BigQueryTools:
         estimated = self.dry_run(guard.sql)
         return guard, estimated
 
-    def execute(self, guard: GuardResult, estimated_bytes: int) -> QueryRun:
+    def execute(
+        self, guard: GuardResult, estimated_bytes: int, *, purpose: str = ""
+    ) -> QueryRun:
         """検査済みの SQL を実行して DataFrame と要約を返す。"""
         job_config = bigquery.QueryJobConfig(
             maximum_bytes_billed=self.settings.max_bytes_billed,
@@ -259,9 +262,12 @@ class BigQueryTools:
             summary=summary,
             notes=notes,
             truncated=truncated,
+            purpose=purpose,
         )
 
-    def run_query(self, sql: str, *, approved: bool | None = None) -> QueryRun:
+    def run_query(
+        self, sql: str, *, approved: bool | None = None, purpose: str = ""
+    ) -> QueryRun:
         """検査 → dry run → （必要なら確認）→ 実行。
 
         approved が None のまま閾値を超えた場合は ConfirmationRequired を送出する。
@@ -285,7 +291,7 @@ class BigQueryTools:
                 notes=list(guard.notes),
             )
 
-        return self.execute(guard, estimated)
+        return self.execute(guard, estimated, purpose=purpose)
 
 
 # -- エラーメッセージの日本語化 ---------------------------------------

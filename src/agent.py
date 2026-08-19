@@ -101,7 +101,6 @@ class ToolContext:
     # 直近ターンの記録（UI 表示用）
     turn_runs: list[QueryRun] = field(default_factory=list)
     turn_errors: list[str] = field(default_factory=list)
-    turn_tool_calls: list[str] = field(default_factory=list)
 
     # セッション全体の累計（サイドバー表示用）
     session_prompt_tokens: int = 0
@@ -112,7 +111,6 @@ class ToolContext:
     def start_turn(self) -> None:
         self.turn_runs = []
         self.turn_errors = []
-        self.turn_tool_calls = []
 
 
 @dataclass
@@ -298,9 +296,10 @@ class GeminiAgent:
                 )
             }
 
+        purpose = str(args.get("purpose", "")).strip()
         approved = ctx.decisions.get(key) == "approved"
         try:
-            run = ctx.tools.run_query(sql, approved=approved)
+            run = ctx.tools.run_query(sql, approved=approved, purpose=purpose)
         except ConfirmationRequired as need:
             raise _Pending(key, need) from None
 
@@ -323,15 +322,6 @@ class GeminiAgent:
     def _dispatch(self, call: Any, ctx: ToolContext) -> types.Part:
         name = call.name
         args = dict(call.args or {})
-        label = name
-        if name == "run_query" and args.get("purpose"):
-            label = f"run_query（{args['purpose']}）"
-        elif name in ("list_tables", "get_table_schema"):
-            detail = ".".join(
-                str(args[k]) for k in ("dataset", "table") if args.get(k)
-            )
-            label = f"{name}（{detail}）"
-        ctx.turn_tool_calls.append(label)
 
         try:
             payload = self._call_tool(name, args, ctx)
