@@ -105,7 +105,6 @@ class ToolContext:
     session_prompt_tokens: int = 0
     session_output_tokens: int = 0
     session_total_tokens: int = 0
-    session_query_count: int = 0
     session_billed_bytes: int = 0
 
     def start_turn(self) -> None:
@@ -305,7 +304,6 @@ class GeminiAgent:
 
         ctx.query_cache[key] = run
         ctx.turn_runs.append(run)
-        ctx.session_query_count += 1
         ctx.session_billed_bytes += run.billed_bytes
         return self._query_payload(run)
 

@@ -189,13 +189,13 @@ def render_chart(df, spec: ChartSpec, key_prefix: str) -> None:
 
 def render_run(run: QueryRun, idx: int, msg_idx: int) -> None:
     rows = len(run.dataframe)
-    label = f"実行した SQL — {rows:,} 行 / スキャン {human_bytes(run.estimated_bytes)}"
+    label = f"実行した SQL — {rows:,} 行"
     with st.expander(label):
         st.code(run.sql, language="sql")
         for note in run.notes:
             st.caption(f"ℹ️ {note}")
         if run.billed_bytes:
-            st.caption(f"課金対象バイト: {human_bytes(run.billed_bytes)}")
+            st.caption(f"実行クエリ量: {human_bytes(run.billed_bytes)}")
 
     if not rows:
         st.info("このクエリの結果は 0 件でした。")
@@ -276,8 +276,7 @@ def render_sidebar(settings: Settings, ctx: ToolContext, tools: BigQueryTools) -
             f"""
 - Gemini トークン: **{ctx.session_total_tokens:,}**
   （入力 {ctx.session_prompt_tokens:,} / 出力 {ctx.session_output_tokens:,}）
-- 実行クエリ数: **{ctx.session_query_count}** 件
-- 課金対象バイト合計: **{human_bytes(ctx.session_billed_bytes)}**
+- 実行クエリ量合計: **{human_bytes(ctx.session_billed_bytes)}**
 """
         )
         st.caption("会話をリセットするまでの累計です。")
