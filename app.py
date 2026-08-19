@@ -220,6 +220,17 @@ def render_sidebar(settings: Settings, ctx: ToolContext, tools: BigQueryTools) -
         )
         st.caption("同じスキーマ・同じ SQL は再取得せず、トークンと課金を節約します。")
         st.divider()
+        st.subheader("セッション使用量")
+        st.markdown(
+            f"""
+- Gemini トークン: **{ctx.session_total_tokens:,}**
+  （入力 {ctx.session_prompt_tokens:,} / 出力 {ctx.session_output_tokens:,}）
+- 実行クエリ数: **{ctx.session_query_count}** 件
+- 課金対象バイト合計: **{human_bytes(ctx.session_billed_bytes)}**
+"""
+        )
+        st.caption("会話をリセットするまでの累計です。")
+        st.divider()
         if st.button("会話をリセット", width="stretch"):
             reset_conversation(settings, tools)
             st.rerun()

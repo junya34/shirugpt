@@ -101,6 +101,13 @@ class ToolContext:
     turn_errors: list[str] = field(default_factory=list)
     turn_tool_calls: list[str] = field(default_factory=list)
 
+    # セッション全体の累計（サイドバー表示用）
+    session_prompt_tokens: int = 0
+    session_output_tokens: int = 0
+    session_total_tokens: int = 0
+    session_query_count: int = 0
+    session_billed_bytes: int = 0
+
     def start_turn(self) -> None:
         self.turn_runs = []
         self.turn_errors = []
@@ -298,6 +305,8 @@ class GeminiAgent:
 
         ctx.query_cache[key] = run
         ctx.turn_runs.append(run)
+        ctx.session_query_count += 1
+        ctx.session_billed_bytes += run.billed_bytes
         return self._query_payload(run)
 
     @staticmethod
@@ -354,6 +363,11 @@ class GeminiAgent:
         for _ in range(self.settings.max_tool_iterations):
             if pending_calls is None:
                 response = self._generate(contents)
+                usage = response.usage_metadata
+                if usage is not None:
+                    ctx.session_prompt_tokens += usage.prompt_token_count or 0
+                    ctx.session_output_tokens += usage.candidates_token_count or 0
+                    ctx.session_total_tokens += usage.total_token_count or 0
                 candidate = (response.candidates or [None])[0]
                 if candidate is None or candidate.content is None:
                     detail = f"candidate なし: prompt_feedback={response.prompt_feedback!r}"
