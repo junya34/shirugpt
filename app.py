@@ -200,8 +200,10 @@ def render_run(run: QueryRun, idx: int, msg_idx: int) -> None:
         for note in run.notes:
             st.caption(f"ℹ️ {note}")
         if run.billed_bytes:
-            st.caption(f"実行クエリ量: {human_bytes(run.billed_bytes)}")
-            st.caption(f"結果件数: {rows:,} 件")
+            st.caption(
+                f"実行クエリ量: {human_bytes(run.billed_bytes)}\n"
+                f"結果件数: {rows:,} 件"
+            )
 
     if not rows:
         st.info("このクエリの結果は 0 件でした。")
@@ -287,8 +289,8 @@ def render_sidebar(settings: Settings, ctx: ToolContext, tools: BigQueryTools) -
         st.caption(
             f"会話をリセットするまでの累計です。Gemini の金額は "
             f"{GEMINI_PRICE_AS_OF} 時点のレート"
-            f"（入力 ${GEMINI_INPUT_PRICE_PER_1M_USD}/100万トークン、"
-            f"出力 ${GEMINI_OUTPUT_PRICE_PER_1M_USD}/100万トークン）による概算です。"
+            f"（入力 {"$"}{GEMINI_INPUT_PRICE_PER_1M_USD}/100万トークン、"
+            f"出力 {"$"}{GEMINI_OUTPUT_PRICE_PER_1M_USD}/100万トークン）による概算です。"
         )
         st.divider()
         if st.button("会話をリセット", width="stretch"):
@@ -389,7 +391,7 @@ def main() -> None:
         render_confirmation(pending, agent, ctx)
 
     prompt = st.chat_input(
-        "データについて質問してください（例: 〇〇店の参加率の推移をグラフで見せて）",
+        "質問してください（例: 〇〇店の参加率の推移をグラフで見せて）",
         disabled=pending is not None,
     )
     if not prompt:
