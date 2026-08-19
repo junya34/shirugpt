@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -27,6 +28,8 @@ from .bq_tools import (
 )
 from .config import Settings, human_bytes
 from .sql_guard import SQLGuardError
+
+logger = logging.getLogger(__name__)
 
 SYSTEM_INSTRUCTION = """あなたは BigQuery のデータ分析アシスタントです。
 ユーザーの日本語の質問に対し、提供されたツールを使って BigQuery を調べ、日本語で回答します。
@@ -353,6 +356,9 @@ class GeminiAgent:
                 response = self._generate(contents)
                 candidate = (response.candidates or [None])[0]
                 if candidate is None or candidate.content is None:
+                    detail = f"candidate なし: prompt_feedback={response.prompt_feedback!r}"
+                    logger.warning(detail)
+                    ctx.turn_errors.append(detail)
                     return AnswerResult(
                         "モデルから有効な応答が得られませんでした。質問を言い換えてお試しください。"
                     )
@@ -367,6 +373,15 @@ class GeminiAgent:
                             "回答が長くなりすぎて途中で打ち切られました。"
                             "質問をもう少し絞ってお試しください。"
                         )
+                    if not text:
+                        detail = (
+                            f"text も function_call も返りませんでした: "
+                            f"finish_reason={candidate.finish_reason} "
+                            f"finish_message={candidate.finish_message!r} "
+                            f"safety_ratings={candidate.safety_ratings!r}"
+                        )
+                        logger.warning("%s parts=%r", detail, parts)
+                        ctx.turn_errors.append(detail)
                     return AnswerResult(
                         text or "回答を生成できませんでした。質問を言い換えてお試しください。"
                     )

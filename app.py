@@ -175,6 +175,12 @@ def render_message(message: dict[str, Any], msg_idx: int) -> None:
                 for call in tool_calls:
                     st.markdown(f"- `{call}`")
 
+        errors = message.get("errors") or []
+        if errors:
+            with st.expander(f"診断情報（{len(errors)} 件）"):
+                for err in errors:
+                    st.code(err)
+
         for idx, run in enumerate(message.get("runs") or []):
             render_run(run, idx, msg_idx)
 
@@ -233,6 +239,7 @@ def process_turn(agent: GeminiAgent, ctx: ToolContext) -> None:
                 "text": friendly_error(exc),
                 "runs": list(ctx.turn_runs),
                 "tool_calls": list(ctx.turn_tool_calls),
+                "errors": list(ctx.turn_errors),
                 "is_error": True,
             }
         )
@@ -250,6 +257,7 @@ def process_turn(agent: GeminiAgent, ctx: ToolContext) -> None:
                 "text": result.text,
                 "runs": list(ctx.turn_runs),
                 "tool_calls": list(ctx.turn_tool_calls),
+                "errors": list(ctx.turn_errors),
             }
         )
     st.rerun()
