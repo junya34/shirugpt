@@ -364,7 +364,10 @@ class GeminiAgent:
                 usage = response.usage_metadata
                 if usage is not None:
                     ctx.session_prompt_tokens += usage.prompt_token_count or 0
-                    ctx.session_output_tokens += usage.candidates_token_count or 0
+                    # thinking トークンも出力と同じ単価で課金されるため出力側に含める
+                    ctx.session_output_tokens += (
+                        usage.candidates_token_count or 0
+                    ) + (usage.thoughts_token_count or 0)
                     ctx.session_total_tokens += usage.total_token_count or 0
                 candidate = (response.candidates or [None])[0]
                 if candidate is None or candidate.content is None:

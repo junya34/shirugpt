@@ -32,6 +32,11 @@ from src.config import (
 
 st.set_page_config(page_title="ShiruGPT", page_icon="📊", layout="wide")
 
+# Gemini のトークン単価（USD / 1M トークン）。レート改定時はここを更新する。
+GEMINI_PRICE_AS_OF = "2026-08-19"
+GEMINI_INPUT_PRICE_PER_1M_USD = 0.30
+GEMINI_OUTPUT_PRICE_PER_1M_USD = 2.50
+
 AUTH_HELP = """\
 GCP の認証情報が見つからないか、権限が不足しています。ターミナルで次を実行してください。
 
@@ -272,14 +277,24 @@ def render_sidebar(settings: Settings, ctx: ToolContext, tools: BigQueryTools) -
         st.caption("同じスキーマ・同じ SQL は再取得せず、トークンと課金を節約します。")
         st.divider()
         st.subheader("セッション使用量")
+        gemini_cost_usd = (
+            ctx.session_prompt_tokens / 1_000_000 * GEMINI_INPUT_PRICE_PER_1M_USD
+            + ctx.session_output_tokens / 1_000_000 * GEMINI_OUTPUT_PRICE_PER_1M_USD
+        )
         st.markdown(
             f"""
 - Gemini トークン: **{ctx.session_total_tokens:,}**
   （入力 {ctx.session_prompt_tokens:,} / 出力 {ctx.session_output_tokens:,}）
+  ≈ **${gemini_cost_usd:.4f}**
 - 実行クエリ量合計: **{human_bytes(ctx.session_billed_bytes)}**
 """
         )
-        st.caption("会話をリセットするまでの累計です。")
+        st.caption(
+            f"会話をリセットするまでの累計です。Gemini の金額は "
+            f"{GEMINI_PRICE_AS_OF} 時点のレート"
+            f"（入力 ${GEMINI_INPUT_PRICE_PER_1M_USD}/100万トークン、"
+            f"出力 ${GEMINI_OUTPUT_PRICE_PER_1M_USD}/100万トークン）による概算です。"
+        )
         st.divider()
         if st.button("会話をリセット", width="stretch"):
             reset_conversation(settings, tools)
