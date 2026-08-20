@@ -379,6 +379,26 @@ gcloud services enable bigquery.googleapis.com aiplatform.googleapis.com --proje
 | BigQuery のデータ読み取り | `roles/bigquery.dataViewer` |
 | クエリジョブの実行 | `roles/bigquery.jobUser` |
 | Gemini の呼び出し | `roles/aiplatform.user`（Vertex AI ユーザー） |
+| 利用ログの記録（任意） | ログ用データセットに `roles/bigquery.dataEditor` |
+
+### 利用ログを使う場合（任意）
+
+`BQ_LOG_DATASET` を設定すると、利用者ごとのトークン量・クエリ量が
+BigQuery に記録され、管理者ページ（`ADMIN_EMAILS` のメールのみ閲覧可）で
+日別・月別に確認できます。設定しなければこの機能はオフになり、
+アプリは従来どおり動作します。
+
+> **`BQ_LOG_DATASET` の名前を `BQ_ALLOWED_DATASETS` に含めないでください。**
+> 含めると全利用者の使用量が Gemini から参照可能になります。
+> 混入している場合はアプリが起動時に停止して知らせます。
+
+データセットは初回起動時に自動作成を試みますが、それには
+`roles/bigquery.user`（データセット作成権限）が必要です。付与したくない場合は
+事前に手で作り、そのデータセットにだけ `dataEditor` を付与してください。
+
+```bash
+bq --location=<ロケーション> mk --dataset <プロジェクトID>:shirugpt_usage_log
+```
 
 ## 4. 認証
 
@@ -463,6 +483,10 @@ cp .env.example .env
 | `MAX_RESULT_ROWS` | `5000` | UI に読み込む最大行数（メモリ保護） |
 | `SAMPLE_ROWS` | `15` | Gemini に渡すサンプル行数 |
 | `MAX_TOOL_ITERATIONS` | `12` | 1 ターンあたりの tool 呼び出しループ上限 |
+| `BQ_LOG_DATASET` | （空） | 利用ログの記録先データセット。空で機能オフ。**allowlist に含めない** |
+| `BQ_LOG_TABLE` | `usage_events` | 利用ログのテーブル名 |
+| `ADMIN_EMAILS` | （空） | 管理者ページを開けるメールアドレス（カンマ区切り） |
+| `ADMIN_ALLOW_LOCAL` | （空） | ローカル開発時のみ管理者ページを開く。**Cloud の Secrets に入れない** |
 
 すべて `.env` 由来で、コードにハードコードされている値はありません。
 テーブル名やカラム構成も埋め込まず、実行時に動的取得します。

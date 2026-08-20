@@ -50,6 +50,13 @@ def _csv(name: str, default: str = "") -> tuple[str, ...]:
     return tuple(item.strip() for item in raw.split(",") if item.strip())
 
 
+def _bool(name: str, default: bool = False) -> bool:
+    raw = _str(name).lower()
+    if not raw:
+        return default
+    return raw in ("1", "true", "yes", "on")
+
+
 @dataclass(frozen=True)
 class Settings:
     gcp_project: str
@@ -70,8 +77,23 @@ class Settings:
     sample_rows: int
     max_tool_iterations: int
 
+    # 利用ログ（Gemini 境界の外。allowed_datasets には絶対に含めない）
+    log_dataset: str
+    log_table: str
+    admin_emails: tuple[str, ...]
+    admin_allow_local: bool
+
     def is_dataset_allowed(self, dataset: str) -> bool:
         return dataset in self.allowed_datasets
+
+    def is_admin(self, email: str) -> bool:
+        if not email:
+            return False
+        return email.strip().lower() in {e.lower() for e in self.admin_emails}
+
+    @property
+    def logging_enabled(self) -> bool:
+        return bool(self.log_dataset and self.log_table)
 
     @property
     def auth_mode(self) -> str:
@@ -126,6 +148,16 @@ def load_settings() -> Settings:
     if default_dataset and default_dataset not in allowed:
         allowed = (default_dataset, *allowed)
 
+    # 利用ログのデータセットは Gemini 境界の外に置く。allowlist に混入すると
+    # list_datasets で名前が見え、sql_guard も参照を通してしまい、
+    # 他利用者の使用量が自然言語質問経由で漏れる。設定ミスを起動時に落とす。
+    log_dataset = _str("BQ_LOG_DATASET")
+    if log_dataset and log_dataset in allowed:
+        raise ConfigError(
+            f"BQ_LOG_DATASET「{log_dataset}」を BQ_ALLOWED_DATASETS に含めないでください。"
+            "利用ログが Gemini からアクセス可能になります。"
+        )
+
     return Settings(
         gcp_project=project,
         bq_location=_str("BQ_LOCATION") or None,
@@ -141,6 +173,10 @@ def load_settings() -> Settings:
         max_result_rows=_int("MAX_RESULT_ROWS", 5000),
         sample_rows=_int("SAMPLE_ROWS", 15),
         max_tool_iterations=_int("MAX_TOOL_ITERATIONS", 12),
+        log_dataset=log_dataset,
+        log_table=_str("BQ_LOG_TABLE", "usage_events"),
+        admin_emails=_csv("ADMIN_EMAILS"),
+        admin_allow_local=_bool("ADMIN_ALLOW_LOCAL"),
     )
 
 
@@ -178,6 +214,21 @@ def credentials_leak_warning(settings: Settings) -> str | None:
             "このままではコミットに含まれる恐れがあります。"
         )
     return None
+
+
+# Gemini のトークン単価（USD / 1M トークン）。レート改定時はここを更新する。
+# サイドバーと管理者ページの両方がこれを参照する（定数を二重に持たない）。
+GEMINI_PRICE_AS_OF = "2026-08-19"
+GEMINI_INPUT_PRICE_PER_1M_USD = 0.30
+GEMINI_OUTPUT_PRICE_PER_1M_USD = 2.50
+
+
+def gemini_cost_usd(prompt_tokens: int, output_tokens: int) -> float:
+    """トークン数から概算金額（USD）を求める。output には thinking 分も含める。"""
+    return (
+        prompt_tokens / 1_000_000 * GEMINI_INPUT_PRICE_PER_1M_USD
+        + output_tokens / 1_000_000 * GEMINI_OUTPUT_PRICE_PER_1M_USD
+    )
 
 
 def human_bytes(num: float) -> str:

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -28,6 +29,7 @@ from .bq_tools import (
 )
 from .config import Settings, human_bytes
 from .sql_guard import SQLGuardError
+from .usage_log import UsageLogger
 
 logger = logging.getLogger(__name__)
 
@@ -108,9 +110,16 @@ class ToolContext:
     session_total_tokens: int = 0
     session_billed_bytes: int = 0
 
+    # 利用ログ（Gemini 境界の外。UsageLogger 側で例外は握られる）
+    usage_logger: UsageLogger | None = None
+    user_email: str = ""
+    session_id: str = field(default_factory=lambda: uuid.uuid4().hex)
+    turn_id: str = ""
+
     def start_turn(self) -> None:
         self.turn_runs = []
         self.turn_errors = []
+        self.turn_id = uuid.uuid4().hex
 
 
 @dataclass
@@ -306,6 +315,15 @@ class GeminiAgent:
         ctx.query_cache[key] = run
         ctx.turn_runs.append(run)
         ctx.session_billed_bytes += run.billed_bytes
+        # キャッシュヒット時は上で早期 return しており課金も発生しないため、
+        # ログもここ（新規実行時）だけに置く。二重計上を避ける。
+        if ctx.usage_logger is not None:
+            ctx.usage_logger.log_bq_query(
+                user_email=ctx.user_email,
+                session_id=ctx.session_id,
+                turn_id=ctx.turn_id,
+                billed_bytes=run.billed_bytes,
+            )
         return self._query_payload(run)
 
     @staticmethod
@@ -355,12 +373,24 @@ class GeminiAgent:
                 response = self._generate(contents)
                 usage = response.usage_metadata
                 if usage is not None:
-                    ctx.session_prompt_tokens += usage.prompt_token_count or 0
+                    prompt_tokens = usage.prompt_token_count or 0
                     # thinking トークンも出力と同じ単価で課金されるため出力側に含める
-                    ctx.session_output_tokens += (
-                        usage.candidates_token_count or 0
-                    ) + (usage.thoughts_token_count or 0)
-                    ctx.session_total_tokens += usage.total_token_count or 0
+                    output_tokens = (usage.candidates_token_count or 0) + (
+                        usage.thoughts_token_count or 0
+                    )
+                    total_tokens = usage.total_token_count or 0
+                    ctx.session_prompt_tokens += prompt_tokens
+                    ctx.session_output_tokens += output_tokens
+                    ctx.session_total_tokens += total_tokens
+                    if ctx.usage_logger is not None:
+                        ctx.usage_logger.log_gemini_call(
+                            user_email=ctx.user_email,
+                            session_id=ctx.session_id,
+                            turn_id=ctx.turn_id,
+                            prompt_tokens=prompt_tokens,
+                            output_tokens=output_tokens,
+                            total_tokens=total_tokens,
+                        )
                 candidate = (response.candidates or [None])[0]
                 if candidate is None or candidate.content is None:
                     detail = f"candidate なし: prompt_feedback={response.prompt_feedback!r}"

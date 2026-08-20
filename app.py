@@ -14,6 +14,7 @@ from typing import Any
 import streamlit as st
 from google.genai import types
 
+from src.admin_page import render_admin_page
 from src.agent import (
     AnswerResult,
     ConfirmationPending,
@@ -23,19 +24,19 @@ from src.agent import (
 from src.bq_tools import BigQueryTools, QueryRun, friendly_error
 from src.charts import KIND_LABELS, ChartSpec, suggest_chart
 from src.config import (
+    GEMINI_INPUT_PRICE_PER_1M_USD,
+    GEMINI_OUTPUT_PRICE_PER_1M_USD,
+    GEMINI_PRICE_AS_OF,
     ConfigError,
     Settings,
     credentials_leak_warning,
+    gemini_cost_usd,
     human_bytes,
     load_settings,
 )
+from src.usage_log import UsageLogger
 
 st.set_page_config(page_title="ShiruGPT", page_icon="📊", layout="wide")
-
-# Gemini のトークン単価（USD / 1M トークン）。レート改定時はここを更新する。
-GEMINI_PRICE_AS_OF = "2026-08-19"
-GEMINI_INPUT_PRICE_PER_1M_USD = 0.30
-GEMINI_OUTPUT_PRICE_PER_1M_USD = 2.50
 
 AUTH_HELP = """\
 GCP の認証情報が見つからないか、権限が不足しています。ターミナルで次を実行してください。
@@ -64,7 +65,32 @@ _SECRET_ENV_KEYS = (
     "MAX_RESULT_ROWS",
     "SAMPLE_ROWS",
     "MAX_TOOL_ITERATIONS",
+    "BQ_LOG_DATASET",
+    "BQ_LOG_TABLE",
+    "ADMIN_EMAILS",
+    # ADMIN_ALLOW_LOCAL は .env 専用（認証を迂回するフラグなので
+    # Streamlit Cloud の Secrets からは意図的に読まない）
 )
+
+
+def resolve_viewer_email() -> str:
+    """ログイン中の閲覧者のメールアドレス。取得できなければ空文字。
+
+    Streamlit Community Cloud の閲覧者制限が有効なとき、ログイン中の
+    メールアドレスがここに入る。ローカル実行では取得できない。
+    `st.user`（新 API）と `st.experimental_user`（旧 API）の両方に対応する。
+    """
+    for attr in ("user", "experimental_user"):
+        obj = getattr(st, attr, None)
+        if obj is None:
+            continue
+        try:
+            email = getattr(obj, "email", None)
+        except Exception:  # noqa: BLE001 - 未ログイン時に例外を出す実装に備える
+            email = None
+        if email:
+            return str(email)
+    return ""
 
 
 def _bootstrap_secrets() -> None:
@@ -98,13 +124,35 @@ def _bootstrap_secrets() -> None:
 
 
 @st.cache_resource(show_spinner=False)
-def build_runtime() -> tuple[Settings, BigQueryTools, GeminiAgent]:
+def build_runtime() -> tuple[Settings, BigQueryTools, GeminiAgent, UsageLogger]:
     _bootstrap_secrets()
     settings = load_settings()
-    return settings, BigQueryTools(settings), GeminiAgent(settings)
+    usage_logger = UsageLogger(settings)
+    # ベストエフォート。失敗しても例外は投げず、起動を止めない。
+    usage_logger.ensure_table()
+    return settings, BigQueryTools(settings), GeminiAgent(settings), usage_logger
 
 
-def init_state(settings: Settings, tools: BigQueryTools) -> ToolContext:
+def _new_context(
+    settings: Settings,
+    tools: BigQueryTools,
+    usage_logger: UsageLogger,
+    user_email: str,
+) -> ToolContext:
+    return ToolContext(
+        tools=tools,
+        settings=settings,
+        usage_logger=usage_logger,
+        user_email=user_email,
+    )
+
+
+def init_state(
+    settings: Settings,
+    tools: BigQueryTools,
+    usage_logger: UsageLogger,
+    user_email: str,
+) -> ToolContext:
     if "messages" not in st.session_state:
         st.session_state.messages = []
     if "contents" not in st.session_state:
@@ -112,15 +160,22 @@ def init_state(settings: Settings, tools: BigQueryTools) -> ToolContext:
     if "pending" not in st.session_state:
         st.session_state.pending = None
     if "ctx" not in st.session_state:
-        st.session_state.ctx = ToolContext(tools=tools, settings=settings)
+        st.session_state.ctx = _new_context(
+            settings, tools, usage_logger, user_email
+        )
     return st.session_state.ctx
 
 
-def reset_conversation(settings: Settings, tools: BigQueryTools) -> None:
+def reset_conversation(
+    settings: Settings,
+    tools: BigQueryTools,
+    usage_logger: UsageLogger,
+    user_email: str,
+) -> None:
     st.session_state.messages = []
     st.session_state.contents = []
     st.session_state.pending = None
-    st.session_state.ctx = ToolContext(tools=tools, settings=settings)
+    st.session_state.ctx = _new_context(settings, tools, usage_logger, user_email)
 
 
 # --------------------------------------------------------------------
@@ -238,7 +293,13 @@ def render_message(message: dict[str, Any], msg_idx: int) -> None:
             render_run(run, idx, msg_idx)
 
 
-def render_sidebar(settings: Settings, ctx: ToolContext, tools: BigQueryTools) -> None:
+def render_sidebar(
+    settings: Settings,
+    ctx: ToolContext,
+    tools: BigQueryTools,
+    usage_logger: UsageLogger,
+    user_email: str,
+) -> None:
     with st.sidebar:
         st.header("設定")
         auth_label = (
@@ -274,15 +335,14 @@ def render_sidebar(settings: Settings, ctx: ToolContext, tools: BigQueryTools) -
         st.caption("同じスキーマ・同じ SQL は再取得せず、トークンと課金を節約します。")
         st.divider()
         st.subheader("セッション使用量")
-        gemini_cost_usd = (
-            ctx.session_prompt_tokens / 1_000_000 * GEMINI_INPUT_PRICE_PER_1M_USD
-            + ctx.session_output_tokens / 1_000_000 * GEMINI_OUTPUT_PRICE_PER_1M_USD
+        cost_usd = gemini_cost_usd(
+            ctx.session_prompt_tokens, ctx.session_output_tokens
         )
         st.markdown(
             f"""
 - Gemini トークン: **{ctx.session_total_tokens:,}**
   （入力 {ctx.session_prompt_tokens:,} / 出力 {ctx.session_output_tokens:,}）
-  ≈ **${gemini_cost_usd:.4f}**
+  ≈ **${cost_usd:.4f}**
 - 実行クエリ量合計: **{human_bytes(ctx.session_billed_bytes)}**
 """
         )
@@ -294,7 +354,7 @@ def render_sidebar(settings: Settings, ctx: ToolContext, tools: BigQueryTools) -
         )
         st.divider()
         if st.button("会話をリセット", width="stretch"):
-            reset_conversation(settings, tools)
+            reset_conversation(settings, tools, usage_logger, user_email)
             st.rerun()
 
 
@@ -358,30 +418,24 @@ def render_confirmation(
 
 
 # --------------------------------------------------------------------
-# メイン
+# ページ
 # --------------------------------------------------------------------
-def main() -> None:
+def render_chat_page(
+    settings: Settings,
+    tools: BigQueryTools,
+    agent: GeminiAgent,
+    usage_logger: UsageLogger,
+    user_email: str,
+) -> None:
     st.title("📊 ShiruGPT")
     st.caption("SHIRUCAFEデータの可視化・分析AI")
-
-    try:
-        settings, tools, agent = build_runtime()
-    except ConfigError as exc:
-        st.error(str(exc))
-        st.stop()
-        return
-    except Exception as exc:  # noqa: BLE001
-        st.error(friendly_error(exc))
-        st.markdown(AUTH_HELP)
-        st.stop()
-        return
 
     leak = credentials_leak_warning(settings)
     if leak:
         st.error(f"⚠️ {leak}")
 
-    ctx = init_state(settings, tools)
-    render_sidebar(settings, ctx, tools)
+    ctx = init_state(settings, tools, usage_logger, user_email)
+    render_sidebar(settings, ctx, tools, usage_logger, user_email)
 
     for msg_idx, message in enumerate(st.session_state.messages):
         render_message(message, msg_idx)
@@ -411,6 +465,55 @@ def main() -> None:
         st.markdown(prompt)
     with st.spinner("データベースを調べています…"):
         process_turn(agent, ctx)
+
+
+# --------------------------------------------------------------------
+# メイン
+# --------------------------------------------------------------------
+def main() -> None:
+    try:
+        settings, tools, agent, usage_logger = build_runtime()
+    except ConfigError as exc:
+        st.error(str(exc))
+        st.stop()
+        return
+    except Exception as exc:  # noqa: BLE001
+        st.error(friendly_error(exc))
+        st.markdown(AUTH_HELP)
+        st.stop()
+        return
+
+    user_email = resolve_viewer_email()
+
+    pages = [
+        st.Page(
+            lambda: render_chat_page(
+                settings, tools, agent, usage_logger, user_email
+            ),
+            title="チャット",
+            icon="💬",
+            default=True,
+        )
+    ]
+    # 管理者以外にはページ自体を渡さない（ナビゲーションに出さないための措置）。
+    # 実際のアクセス制御は render_admin_page の冒頭で毎回行う。
+    if settings.is_admin(user_email) or (
+        settings.admin_allow_local and not user_email
+    ):
+        pages.append(
+            st.Page(
+                lambda: render_admin_page(settings, usage_logger, user_email),
+                title="利用状況",
+                icon="🛠️",
+                url_path="usage",
+            )
+        )
+
+    if len(pages) > 1:
+        st.navigation(pages).run()
+    else:
+        # ページが 1 つだけならナビゲーションを出さず、従来どおりの見た目にする
+        render_chat_page(settings, tools, agent, usage_logger, user_email)
 
 
 main()
