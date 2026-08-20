@@ -73,21 +73,29 @@ _SECRET_ENV_KEYS = (
 )
 
 
-def resolve_viewer_email() -> str:
-    """ログイン中の閲覧者のメールアドレス。取得できなければ空文字。
+def auth_configured() -> bool:
+    """`st.login()` 用の [auth] 設定が secrets にあるか。
 
-    Streamlit Community Cloud の閲覧者制限が有効なとき、ログイン中の
-    メールアドレスがここに入る。ローカル実行では取得できない。
-    `st.user`（新 API）と `st.experimental_user`（旧 API）の両方に対応する。
+    Streamlit 1.42 以降、Community Cloud の閲覧者制限だけでは
+    メールアドレスが取れない（st.user は空になる）。取得するには
+    自前で OIDC（Google など）を [auth] に設定し st.login() する必要がある。
+    ローカル開発では通常これが無いので、ここが False になり
+    ログインゲート自体をスキップする。
     """
-    for attr in ("user", "experimental_user"):
-        obj = getattr(st, attr, None)
-        if obj is None:
-            continue
-        try:
-            email = getattr(obj, "email", None)
-        except Exception:  # noqa: BLE001 - 未ログイン時に例外を出す実装に備える
-            email = None
+    try:
+        return "auth" in dict(st.secrets)
+    except Exception:
+        return False
+
+
+def resolve_viewer_email() -> str:
+    """st.login() でログイン済みなら、そのメールアドレス。それ以外は空文字。
+
+    `is_logged_in` は認証未設定でも常に存在する（未ログイン扱い）。
+    `email` は実際にログインし、プロバイダがそのクレームを返した場合のみ入る。
+    """
+    if getattr(st.user, "is_logged_in", False):
+        email = getattr(st.user, "email", None)
         if email:
             return str(email)
     return ""
@@ -301,6 +309,10 @@ def render_sidebar(
     user_email: str,
 ) -> None:
     with st.sidebar:
+        if user_email:
+            st.caption(f"ログイン中: {user_email}")
+            if st.button("ログアウト", width="stretch"):
+                st.logout()
         st.header("設定")
         auth_label = (
             "サービスアカウントキー"
@@ -356,14 +368,6 @@ def render_sidebar(
         if st.button("会話をリセット", width="stretch"):
             reset_conversation(settings, tools, usage_logger, user_email)
             st.rerun()
-
-        # TODO: 管理者ページが表示されない問題の一時診断用。原因判明後に削除する。
-        st.divider()
-        st.caption(
-            f"[診断] 検出した閲覧者メール: `{user_email or '(取得できず)'}` / "
-            f"管理者リストの件数: {len(settings.admin_emails)} / "
-            f"管理者判定: {settings.is_admin(user_email)}"
-        )
 
 
 # --------------------------------------------------------------------
@@ -488,6 +492,17 @@ def main() -> None:
     except Exception as exc:  # noqa: BLE001
         st.error(friendly_error(exc))
         st.markdown(AUTH_HELP)
+        st.stop()
+        return
+
+    # [auth] が設定されている（= Streamlit Cloud で OIDC ログインを使う）場合のみ、
+    # ログインを必須にする。ローカル開発では auth 未設定が通常なのでスキップされ、
+    # 従来どおり ADMIN_ALLOW_LOCAL によるバイパスに委ねる。
+    if auth_configured() and not getattr(st.user, "is_logged_in", False):
+        st.title("📊 ShiruGPT")
+        st.info("続けるには Google でログインしてください。")
+        if st.button("Google でログイン", type="primary"):
+            st.login()
         st.stop()
         return
 

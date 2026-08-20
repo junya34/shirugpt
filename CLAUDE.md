@@ -76,6 +76,13 @@ Streamlit の UI（`app.py`）が Gemini の Function Calling ループ（`src/a
 連続失敗が続く場合はプロセス内で記録を諦める（毎イベントで失敗する
 API 往復を繰り返すとチャットの応答が遅くなるため）。
 
+**利用者メールの取得元に注意。** Streamlit 1.42 以降、Community Cloud の
+閲覧者制限（Private + 許可メール）だけではアプリに閲覧者のメールが渡らない
+（`st.user` は空のまま）。`app.py` の `resolve_viewer_email()` は自前で設定した
+`st.login()`（Google OIDC、`secrets.toml` の `[auth]`）に依存している。
+`auth_configured()` が `False`（`[auth]` 未設定、主にローカル開発）のときは
+ログインゲート自体をスキップする仕様なので、「メールが空＝バグ」ではない。
+
 管理者ページ（`src/admin_page.py`）のアクセス制御は、`st.navigation` から
 ページを外すだけに頼らず、**`render_admin_page()` の冒頭で毎回**
 閲覧者メールを `ADMIN_EMAILS` と照合する。URL 直打ちを防ぐのはこちらが主防御。

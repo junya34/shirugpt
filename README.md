@@ -400,6 +400,38 @@ BigQuery に記録され、管理者ページ（`ADMIN_EMAILS` のメールの�
 bq --location=<ロケーション> mk --dataset <プロジェクトID>:shirugpt_usage_log
 ```
 
+**利用者ごとに識別するには、閲覧者のログインが別途必要です。** Streamlit は
+バージョン 1.42 以降、Community Cloud の閲覧者制限（Private + 許可メール）だけでは
+アプリ側にメールアドレスを渡さなくなりました。利用ログ・管理者ページで
+「誰が」を識別するには、Google を識別プロバイダとした `st.login()` を
+自前で設定する必要があります。
+
+1. [Google Cloud Console](https://console.cloud.google.com/apis/credentials) で
+   OAuth 2.0 クライアント ID を作成する（アプリケーションの種類: ウェブアプリケーション）。
+   承認済みのリダイレクト URI に、アプリの公開 URL に `/oauth2callback` を
+   付けたものを登録する（例: `https://<アプリ名>.streamlit.app/oauth2callback`）。
+2. Streamlit Cloud の Secrets に、既存の内容に追記する形で次を追加する
+   （`client_id` と `client_secret` は 1 で発行された値。`cookie_secret` は
+   ランダムな文字列を自分で用意する。**この値は Claude Code には貼り付けず、
+   自分で Secrets に直接入力すること**）:
+
+   ```toml
+   [auth]
+   redirect_uri = "https://<アプリ名>.streamlit.app/oauth2callback"
+   cookie_secret = "（ランダムな文字列）"
+   client_id = "（Google の client_id）"
+   client_secret = "（Google の client_secret）"
+   server_metadata_url = "https://accounts.google.com/.well-known/openid-configuration"
+   ```
+
+3. 保存すると自動的に再起動する。以後、アプリを開くと「Google でログイン」
+   ボタンが表示され、ログインしたメールアドレスが利用ログと管理者ページの
+   識別に使われる。
+
+`[auth]` を設定しなければこのログインゲート自体が現れず、アプリは
+（利用者を識別できない状態で）これまでどおり動く。ローカル開発では
+通常 `[auth]` を設定しないため、影響はない。
+
 ## 4. 認証
 
 認証方式は 2 つあります。開発者本人は方式 A（ADC）を推奨しますが、
