@@ -357,6 +357,14 @@ def render_sidebar(
             reset_conversation(settings, tools, usage_logger, user_email)
             st.rerun()
 
+        # TODO: 管理者ページが表示されない問題の一時診断用。原因判明後に削除する。
+        st.divider()
+        st.caption(
+            f"[診断] 検出した閲覧者メール: `{user_email or '(取得できず)'}` / "
+            f"管理者リストの件数: {len(settings.admin_emails)} / "
+            f"管理者判定: {settings.is_admin(user_email)}"
+        )
+
 
 # --------------------------------------------------------------------
 # ターン処理
