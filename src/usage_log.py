@@ -12,15 +12,20 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from dataclasses import dataclass
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import pandas as pd
+from google.api_core import exceptions as gexc
 from google.cloud import bigquery
 
-from .config import Settings
+from .config import Settings, gemini_cost_usd
 
 logger = logging.getLogger(__name__)
+
+_JST = ZoneInfo("Asia/Tokyo")
 
 # メールが取れないローカル実行などで使う。NULL / 空文字は GROUP BY で紛れるため
 # 明示的な定数を入れる。
@@ -50,6 +55,39 @@ _SCHEMA = [
     bigquery.SchemaField("total_tokens", "INTEGER"),
     bigquery.SchemaField("billed_bytes", "INTEGER"),
 ]
+
+_LIMIT_SCHEMA = [
+    bigquery.SchemaField("user_email", "STRING", mode="REQUIRED"),
+    bigquery.SchemaField("weekly_limit_usd", "FLOAT", mode="REQUIRED"),
+    bigquery.SchemaField("updated_at", "TIMESTAMP", mode="REQUIRED"),
+]
+
+
+def jst_week_bounds_utc(now_utc: datetime | None = None) -> tuple[datetime, datetime]:
+    """「今週」（JST 月曜 0:00 〜 次の月曜 0:00 未満）を UTC の [開始, 終了) で返す。
+
+    `datetime.now()`（サーバーのシステム TZ 依存）は使わず、常に UTC を
+    経由して JST の週境界を計算する。
+    """
+    if now_utc is None:
+        now_utc = datetime.now(timezone.utc)
+    elif now_utc.tzinfo is None:
+        raise ValueError("now_utc は timezone-aware でなければなりません")
+
+    now_jst = now_utc.astimezone(_JST)
+    monday: date = now_jst.date() - timedelta(days=now_jst.weekday())
+    start_jst = datetime.combine(monday, time.min, tzinfo=_JST)
+    end_jst = start_jst + timedelta(days=7)
+    return start_jst.astimezone(timezone.utc), end_jst.astimezone(timezone.utc)
+
+
+@dataclass
+class WeeklyUsage:
+    prompt_tokens: int
+    output_tokens: int
+
+    def cost_usd(self) -> float:
+        return gemini_cost_usd(self.prompt_tokens, self.output_tokens)
 
 
 class UsageLogger:
@@ -82,6 +120,17 @@ class UsageLogger:
             f"{self.settings.log_dataset}.{self.settings.log_table}"
         )
 
+    @property
+    def limits_table_id(self) -> str:
+        return (
+            f"{self.settings.gcp_project}."
+            f"{self.settings.log_dataset}.{self.settings.limit_table}"
+        )
+
+    @property
+    def _limits_staging_table_id(self) -> str:
+        return f"{self.limits_table_id}_staging"
+
     def _get_client(self) -> bigquery.Client:
         if self._client is None:
             self._client = bigquery.Client(
@@ -90,9 +139,19 @@ class UsageLogger:
             )
         return self._client
 
-    def ensure_table(self) -> None:
-        """データセットとテーブルを用意する。失敗しても例外を投げない。
+    def _create_dataset(self, client: bigquery.Client) -> None:
+        dataset_ref = bigquery.Dataset(
+            f"{self.settings.gcp_project}.{self.settings.log_dataset}"
+        )
+        if self.settings.bq_location:
+            dataset_ref.location = self.settings.bq_location
+        client.create_dataset(dataset_ref, exists_ok=True)
 
+    def ensure_table(self) -> None:
+        """データセット・イベントログ・制限テーブルを用意する。
+
+        チャットの高頻度書き込み経路から呼ばれるため、失敗しても例外を
+        投げない（`_record_failure()` で circuit breaker に記録するだけ）。
         成功したときだけ内部フラグを立てる。失敗はキャッシュしないので、
         権限が後から付与されれば次の呼び出しで自然に回復する。
         """
@@ -100,12 +159,7 @@ class UsageLogger:
             return
         try:
             client = self._get_client()
-            dataset_ref = bigquery.Dataset(
-                f"{self.settings.gcp_project}.{self.settings.log_dataset}"
-            )
-            if self.settings.bq_location:
-                dataset_ref.location = self.settings.bq_location
-            client.create_dataset(dataset_ref, exists_ok=True)
+            self._create_dataset(client)
 
             table = bigquery.Table(self.table_id, schema=_SCHEMA)
             # 管理者ページのクエリは常に日付範囲で絞るのでパーティションが効く。
@@ -114,11 +168,38 @@ class UsageLogger:
             )
             table.clustering_fields = ["user_email", "event_type"]
             client.create_table(table, exists_ok=True)
+
+            client.create_table(
+                bigquery.Table(self.limits_table_id, schema=_LIMIT_SCHEMA),
+                exists_ok=True,
+            )
+            client.create_table(
+                bigquery.Table(self._limits_staging_table_id, schema=_LIMIT_SCHEMA),
+                exists_ok=True,
+            )
             self._ready = True
             self._failures = 0
         except Exception:  # noqa: BLE001 - ログ機能の失敗でアプリを止めない
             logger.warning("利用ログテーブルの初期化に失敗しました。", exc_info=True)
             self._record_failure()
+
+    def _ensure_limits_infra(self) -> None:
+        """制限テーブルの用意（管理者操作専用）。
+
+        書き込み側の circuit breaker（`enabled`）には従わない。チャットの
+        ログ書き込みが何度失敗していても、管理者は制限を設定できるべき
+        だから。失敗時は例外をそのまま上げる（`save_limits()` の契約）。
+        """
+        client = self._get_client()
+        self._create_dataset(client)
+        client.create_table(
+            bigquery.Table(self.limits_table_id, schema=_LIMIT_SCHEMA),
+            exists_ok=True,
+        )
+        client.create_table(
+            bigquery.Table(self._limits_staging_table_id, schema=_LIMIT_SCHEMA),
+            exists_ok=True,
+        )
 
     def _insert(self, row: dict[str, Any]) -> None:
         if not self.enabled:
@@ -234,6 +315,125 @@ class UsageLogger:
             sql, job_config=job_config, location=self.settings.bq_location
         )
         return job.result().to_dataframe(create_bqstorage_client=False)
+
+    def weekly_usage(
+        self, user_email: str, start_utc: datetime, end_utc: datetime
+    ) -> WeeklyUsage:
+        """[start_utc, end_utc) の Gemini トークン量を1利用者分だけ集計する。
+
+        `enabled`（書き込み側 circuit breaker）は見ない。読み取りは
+        `query_usage()` と同じ扱い。
+        """
+        if not self.settings.logging_enabled:
+            return WeeklyUsage(prompt_tokens=0, output_tokens=0)
+
+        sql = f"""
+            SELECT
+              SUM(IFNULL(prompt_tokens, 0)) AS prompt_tokens,
+              SUM(IFNULL(output_tokens, 0)) AS output_tokens
+            FROM `{self.table_id}`
+            WHERE event_type = '{EVENT_GEMINI_CALL}'
+              AND user_email = @user_email
+              AND event_time >= @start
+              AND event_time <  @end
+        """
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("user_email", "STRING", user_email),
+                bigquery.ScalarQueryParameter("start", "TIMESTAMP", start_utc),
+                bigquery.ScalarQueryParameter("end", "TIMESTAMP", end_utc),
+            ],
+            maximum_bytes_billed=self.settings.max_bytes_billed,
+            use_query_cache=True,
+        )
+        job = self._get_client().query(
+            sql, job_config=job_config, location=self.settings.bq_location
+        )
+        row = next(iter(job.result()), None)
+        if row is None:
+            return WeeklyUsage(prompt_tokens=0, output_tokens=0)
+        return WeeklyUsage(
+            prompt_tokens=int(row.prompt_tokens or 0),
+            output_tokens=int(row.output_tokens or 0),
+        )
+
+    def get_limits(self) -> pd.DataFrame:
+        """`user_limits` の全件を返す。テーブルが無ければ空の DataFrame。"""
+        columns = ["user_email", "weekly_limit_usd", "updated_at"]
+        if not self.settings.logging_enabled:
+            return pd.DataFrame(columns=columns)
+        try:
+            job = self._get_client().query(
+                f"SELECT {', '.join(columns)} FROM `{self.limits_table_id}`",
+                location=self.settings.bq_location,
+            )
+            return job.result().to_dataframe(create_bqstorage_client=False)
+        except gexc.NotFound:
+            return pd.DataFrame(columns=columns)
+
+    def list_known_users(self) -> list[str]:
+        """利用履歴があるか、制限が既に設定されている利用者のメール一覧。"""
+        if not self.settings.logging_enabled:
+            return []
+        sql = f"""
+            SELECT user_email FROM `{self.table_id}`
+            WHERE user_email != '{UNKNOWN_USER}'
+            UNION DISTINCT
+            SELECT user_email FROM `{self.limits_table_id}`
+        """
+        try:
+            job = self._get_client().query(sql, location=self.settings.bq_location)
+            return sorted(row.user_email for row in job.result())
+        except gexc.NotFound:
+            return []
+
+    def save_limits(self, updates: pd.DataFrame) -> None:
+        """利用者ごとの週次制限額を upsert する（他の利用者の行は変更しない）。
+
+        ステージングテーブルへ全件 WRITE_TRUNCATE で書き込んだ上で MERGE する。
+        `user_limits` 自体には streaming insert を一切行わないので、
+        ストリーミングバッファ由来の DML 制約は最初から関係ない。
+        MERGE 中の同時実行は BigQuery 側が競合エラーとして検出するため、
+        例外をそのまま呼び出し元（管理者ページ）に上げる。
+        """
+        if updates.empty:
+            return
+
+        updates = updates[["user_email", "weekly_limit_usd"]].copy()
+        updates["user_email"] = updates["user_email"].astype(str).str.strip()
+        if (updates["user_email"].isin(["", UNKNOWN_USER])).any():
+            raise ValueError("user_email が空、または予約語です。")
+        if (updates["weekly_limit_usd"].astype(float) < 0).any():
+            raise ValueError("weekly_limit_usd は 0 以上にしてください。")
+        updates = updates.drop_duplicates(subset="user_email", keep="last")
+        updates["weekly_limit_usd"] = updates["weekly_limit_usd"].astype(float)
+        updates["updated_at"] = datetime.now(timezone.utc)
+
+        self._ensure_limits_infra()
+        client = self._get_client()
+        client.load_table_from_dataframe(
+            updates,
+            self._limits_staging_table_id,
+            job_config=bigquery.LoadJobConfig(
+                schema=_LIMIT_SCHEMA,
+                write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,
+            ),
+        ).result()
+
+        client.query(
+            f"""
+            MERGE `{self.limits_table_id}` AS target
+            USING `{self._limits_staging_table_id}` AS source
+            ON target.user_email = source.user_email
+            WHEN MATCHED THEN UPDATE SET
+              weekly_limit_usd = source.weekly_limit_usd,
+              updated_at = source.updated_at
+            WHEN NOT MATCHED THEN
+              INSERT (user_email, weekly_limit_usd, updated_at)
+              VALUES (source.user_email, source.weekly_limit_usd, source.updated_at)
+            """,
+            location=self.settings.bq_location,
+        ).result()
 
 
 def _now_iso() -> str:

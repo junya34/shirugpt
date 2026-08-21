@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import tempfile
 from typing import Any
@@ -24,6 +25,7 @@ from src.agent import (
 from src.bq_tools import BigQueryTools, QueryRun, friendly_error
 from src.charts import KIND_LABELS, ChartSpec, suggest_chart
 from src.config import (
+    DEFAULT_WEEKLY_LIMIT_USD,
     GEMINI_INPUT_PRICE_PER_1M_USD,
     GEMINI_OUTPUT_PRICE_PER_1M_USD,
     GEMINI_PRICE_AS_OF,
@@ -34,9 +36,11 @@ from src.config import (
     human_bytes,
     load_settings,
 )
-from src.usage_log import UsageLogger
+from src.usage_log import UsageLogger, jst_week_bounds_utc
 
 st.set_page_config(page_title="ShiruGPT", page_icon="📊", layout="wide")
+
+logger = logging.getLogger(__name__)
 
 AUTH_HELP = """\
 GCP の認証情報が見つからないか、権限が不足しています。ターミナルで次を実行してください。
@@ -67,6 +71,7 @@ _SECRET_ENV_KEYS = (
     "MAX_TOOL_ITERATIONS",
     "BQ_LOG_DATASET",
     "BQ_LOG_TABLE",
+    "BQ_LIMIT_TABLE",
     "ADMIN_EMAILS",
     # ADMIN_ALLOW_LOCAL は .env 専用（認証を迂回するフラグなので
     # Streamlit Cloud の Secrets からは意図的に読まない）
@@ -184,6 +189,55 @@ def reset_conversation(
     st.session_state.contents = []
     st.session_state.pending = None
     st.session_state.ctx = _new_context(settings, tools, usage_logger, user_email)
+
+
+# --------------------------------------------------------------------
+# 週次の使用制限
+# --------------------------------------------------------------------
+@st.cache_data(ttl=60, show_spinner=False)
+def _cached_limits(_usage_logger: UsageLogger) -> Any:
+    """制限額テーブルの全件（低頻度更新データなので ttl=60 で十分）。"""
+    return _usage_logger.get_limits()
+
+
+def _limit_for(usage_logger: UsageLogger, user_email: str) -> float:
+    try:
+        limits = _cached_limits(usage_logger)
+    except Exception:  # noqa: BLE001 - 読み取り失敗時は既定値にフォールバック
+        return DEFAULT_WEEKLY_LIMIT_USD
+    if limits.empty:
+        return DEFAULT_WEEKLY_LIMIT_USD
+    match = limits.loc[limits["user_email"] == user_email, "weekly_limit_usd"]
+    return float(match.iloc[0]) if not match.empty else DEFAULT_WEEKLY_LIMIT_USD
+
+
+def _effective_weekly_usage_usd(
+    ctx: ToolContext, usage_logger: UsageLogger, user_email: str
+) -> float | None:
+    """今週分の使用金額（USD）。読み取り失敗時は None（＝判定不能、ブロックしない）。
+
+    週替わり・セッション開始時だけ BigQuery に問い合わせ、以降は
+    その時点を基準にセッション内のトークン増分をインメモリで加算する。
+    同一セッション内で毎ターン問い合わせないための近似で、複数タブ/
+    複数セッションを同時に使った場合にわずかな誤差が出ることは許容する。
+    """
+    start_utc, _end_utc = jst_week_bounds_utc()
+    if ctx.limit_baseline_week_start != start_utc:
+        try:
+            usage = usage_logger.weekly_usage(user_email, start_utc, _end_utc)
+        except Exception:  # noqa: BLE001 - フェイルオープン。読めなければブロックしない
+            logger.warning("週次使用量の取得に失敗しました。", exc_info=True)
+            return None
+        ctx.limit_baseline_usd = usage.cost_usd()
+        ctx.limit_baseline_week_start = start_utc
+        ctx.limit_baseline_session_prompt_tokens = ctx.session_prompt_tokens
+        ctx.limit_baseline_session_output_tokens = ctx.session_output_tokens
+
+    delta = gemini_cost_usd(
+        ctx.session_prompt_tokens - ctx.limit_baseline_session_prompt_tokens,
+        ctx.session_output_tokens - ctx.limit_baseline_session_output_tokens,
+    )
+    return ctx.limit_baseline_usd + delta
 
 
 # --------------------------------------------------------------------
@@ -307,6 +361,8 @@ def render_sidebar(
     tools: BigQueryTools,
     usage_logger: UsageLogger,
     user_email: str,
+    weekly_used_usd: float | None,
+    weekly_limit_usd: float,
 ) -> None:
     with st.sidebar:
         if user_email:
@@ -364,6 +420,22 @@ def render_sidebar(
             rf"（入力 \${GEMINI_INPUT_PRICE_PER_1M_USD}/100万トークン、"
             rf"出力 \${GEMINI_OUTPUT_PRICE_PER_1M_USD}/100万トークン）による概算です。"
         )
+        if user_email and settings.logging_enabled and weekly_used_usd is not None:
+            st.divider()
+            st.subheader("今週の使用量（あなたのアカウント）")
+            ratio = weekly_used_usd / weekly_limit_usd if weekly_limit_usd > 0 else 1.0
+            st.progress(min(max(ratio, 0.0), 1.0))
+            st.markdown(
+                f"**${weekly_used_usd:.4f}** / ${weekly_limit_usd:.2f}"
+                f"（{ratio * 100:.0f}%）"
+            )
+            if ratio >= 1.0:
+                st.error("🚫 今週の上限に達しました。次の質問はブロックされます。")
+            elif ratio >= 0.8:
+                st.warning("⚠️ 週の上限の80%を使用しています。")
+            else:
+                st.caption("月曜0:00（JST）にリセットされます。")
+
         st.divider()
         if st.button("会話をリセット", width="stretch"):
             reset_conversation(settings, tools, usage_logger, user_email)
@@ -447,21 +519,38 @@ def render_chat_page(
         st.error(f"⚠️ {leak}")
 
     ctx = init_state(settings, tools, usage_logger, user_email)
-    render_sidebar(settings, ctx, tools, usage_logger, user_email)
+
+    weekly_used_usd = None
+    if user_email and settings.logging_enabled:
+        weekly_used_usd = _effective_weekly_usage_usd(ctx, usage_logger, user_email)
+    weekly_limit_usd = _limit_for(usage_logger, user_email) if user_email else 0.0
+    blocked = weekly_used_usd is not None and weekly_used_usd >= weekly_limit_usd
+
+    render_sidebar(
+        settings, ctx, tools, usage_logger, user_email, weekly_used_usd, weekly_limit_usd
+    )
 
     for msg_idx, message in enumerate(st.session_state.messages):
         render_message(message, msg_idx)
 
     pending = st.session_state.pending
     if pending is not None:
+        # 確認待ちのターンは、開始時点で上限未満だったターンの続きなので、
+        # 承認/拒否ボタン自体はブロックしない（「回答は完了させる」仕様通り）。
         render_confirmation(pending, agent, ctx)
+
+    if blocked and pending is None:
+        st.error(
+            f"🚫 今週の利用上限（${weekly_limit_usd:.2f}）に達したため、"
+            "今週はこれ以上ご利用いただけません。月曜0:00（JST）にリセットされます。"
+        )
 
     prompt = st.chat_input(
         "質問してください（例: 〇〇店の参加率の推移をグラフで見せて）",
-        disabled=pending is not None,
+        disabled=pending is not None or blocked,
     )
     if not prompt:
-        if not st.session_state.messages and pending is None:
+        if not st.session_state.messages and pending is None and not blocked:
             st.info(
                 "プロトタイプ版です。AIは必ずしも正しい回答を返すとは限りません。"
             )

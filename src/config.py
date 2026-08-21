@@ -80,6 +80,7 @@ class Settings:
     # 利用ログ（Gemini 境界の外。allowed_datasets には絶対に含めない）
     log_dataset: str
     log_table: str
+    limit_table: str
     admin_emails: tuple[str, ...]
     admin_allow_local: bool
 
@@ -175,6 +176,7 @@ def load_settings() -> Settings:
         max_tool_iterations=_int("MAX_TOOL_ITERATIONS", 12),
         log_dataset=log_dataset,
         log_table=_str("BQ_LOG_TABLE", "usage_events"),
+        limit_table=_str("BQ_LIMIT_TABLE", "user_limits"),
         admin_emails=_csv("ADMIN_EMAILS"),
         admin_allow_local=_bool("ADMIN_ALLOW_LOCAL"),
     )
@@ -229,6 +231,11 @@ def gemini_cost_usd(prompt_tokens: int, output_tokens: int) -> float:
         prompt_tokens / 1_000_000 * GEMINI_INPUT_PRICE_PER_1M_USD
         + output_tokens / 1_000_000 * GEMINI_OUTPUT_PRICE_PER_1M_USD
     )
+
+
+# 週次の使用制限（Gemini トークン代のみ、USD）。user_limits に行が無い
+# 利用者に適用される既定値。管理者ページの一括適用フォームの初期値もこれ。
+DEFAULT_WEEKLY_LIMIT_USD = 1.0
 
 
 def human_bytes(num: float) -> str:

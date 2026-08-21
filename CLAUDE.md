@@ -83,6 +83,37 @@ API 往復を繰り返すとチャットの応答が遅くなるため）。
 `auth_configured()` が `False`（`[auth]` 未設定、主にローカル開発）のときは
 ログインゲート自体をスキップする仕様なので、「メールが空＝バグ」ではない。
 
+### 週次の使用制限（`user_limits`）
+
+利用者ごとの週間 USD 上限（既定 `DEFAULT_WEEKLY_LIMIT_USD`、`config.py`）を
+`user_limits`/`user_limits_staging` テーブルで管理する。両方とも `log_dataset`
+（`BQ_LOG_DATASET`）の中に置くので、上記の Gemini 境界の防御（allowlist から
+除外・`sql_guard` の拒否・起動時ガード）が**追加のコード無しでそのまま適用**
+される。新しいテーブルを `log_dataset` に増やすときはこの前提を崩さないこと。
+
+- **書き込み方式が違う。** `usage_events` は高頻度の `insert_rows_json`
+  （ストリーミング）だが、`user_limits` は管理者が低頻度で編集する設定データ
+  なので、ステージングテーブルへ `WRITE_TRUNCATE` → 本体テーブルへ `MERGE`
+  （upsert のみ、DELETE 分岐なし）という別方式（`UsageLogger.save_limits()`）。
+  `user_limits` 自体には streaming insert を一切行わないので、ストリーミング
+  バッファ直後の DML 制約は最初から関係ない。同時保存は BigQuery が競合エラー
+  として検出するので、リトライ機構は作らず例外をそのまま管理者に見せる。
+- **circuit breaker の対象が違う。** `ensure_table()`（チャットの高頻度書き込み
+  経路から呼ばれる）は `enabled`（連続失敗5回で無効化）に従うが、
+  `_ensure_limits_infra()`（管理者操作専用）は従わない。チャット側のログ書き込み
+  が何度失敗していても、管理者は制限を設定できるべきだから。
+- **ブロック判定はセッション内カウンタとのハイブリッド。** `app.py` の
+  `_effective_weekly_usage_usd()` は、週替わり・セッション開始時だけ BigQuery
+  に問い合わせて基準値を取り、以降は同一セッション内のトークン増分
+  （`ctx.session_prompt_tokens` 等、既に同期的に加算済み）をインメモリで
+  加算する近似値を使う。`st.cache_data(ttl=60)` のような時間ベースのキャッシュ
+  だけに頼ると、60 秒以内の連投で上限をすり抜けられるため採用していない。
+  読み取り失敗時は `None` を返し、判定不能＝ブロックしない（フェイルオープン）。
+- **「その回答は完了させてから、次で止める」仕様。** ブロック判定はターン開始前
+  （`st.chat_input` を無効化するタイミング）でのみ行う。確認待ち
+  （`ConfirmationPending`、`render_confirmation()`）の承認/拒否ボタンは
+  ブロック対象にしない — それは開始時点で上限未満だったターンの続きだから。
+
 管理者ページ（`src/admin_page.py`）のアクセス制御は、`st.navigation` から
 ページを外すだけに頼らず、**`render_admin_page()` の冒頭で毎回**
 閲覧者メールを `ADMIN_EMAILS` と照合する。URL 直打ちを防ぐのはこちらが主防御。

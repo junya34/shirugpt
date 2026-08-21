@@ -14,6 +14,7 @@ import hashlib
 import logging
 import uuid
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any
 
 from google import genai
@@ -115,6 +116,14 @@ class ToolContext:
     user_email: str = ""
     session_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     turn_id: str = ""
+
+    # 週次の使用制限判定用ベースライン（app.py 側で更新する。ロジックは
+    # ここには置かない。BigQuery への問い合わせを毎ターン避けるため、
+    # 週の開始時点の使用量 + このセッションでの増分、で近似する）
+    limit_baseline_usd: float = 0.0
+    limit_baseline_week_start: datetime | None = None
+    limit_baseline_session_prompt_tokens: int = 0
+    limit_baseline_session_output_tokens: int = 0
 
     def start_turn(self) -> None:
         self.turn_runs = []

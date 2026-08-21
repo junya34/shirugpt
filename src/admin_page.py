@@ -17,6 +17,7 @@ import pandas as pd
 import streamlit as st
 
 from .config import (
+    DEFAULT_WEEKLY_LIMIT_USD,
     GEMINI_INPUT_PRICE_PER_1M_USD,
     GEMINI_OUTPUT_PRICE_PER_1M_USD,
     GEMINI_PRICE_AS_OF,
@@ -97,7 +98,7 @@ def render_admin_page(settings: Settings, logger: UsageLogger, viewer_email: str
         st.error("お探しのページは見つかりませんでした。")
         st.stop()
 
-    st.title("🛠️ 利用状況")
+    st.title("🛠️ 利用状況・使用制限")
     if dev_bypass:
         st.warning(
             "**開発モード: 認証なしで表示中**（ADMIN_ALLOW_LOCAL が有効）。"
@@ -111,6 +112,14 @@ def render_admin_page(settings: Settings, logger: UsageLogger, viewer_email: str
         )
         return
 
+    tab_usage, tab_limits = st.tabs(["利用状況", "使用制限"])
+    with tab_usage:
+        _render_usage_tab(logger)
+    with tab_limits:
+        _render_limits_tab(logger)
+
+
+def _render_usage_tab(logger: UsageLogger) -> None:
     # --- 期間の指定 -------------------------------------------------
     today = date.today()
     col1, col2 = st.columns(2)
@@ -155,4 +164,104 @@ def render_admin_page(settings: Settings, logger: UsageLogger, viewer_email: str
         f"（入力 ${GEMINI_INPUT_PRICE_PER_1M_USD}/100万トークン、"
         f"出力 ${GEMINI_OUTPUT_PRICE_PER_1M_USD}/100万トークン）による概算です。"
         "クエリ量は BigQuery の課金対象バイト数で、金額には含めていません。"
+    )
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def _load_limits(_logger: UsageLogger) -> pd.DataFrame:
+    """既知の利用者一覧に、設定済みの週次制限額（無ければ既定値）を合わせる。"""
+    known = _logger.list_known_users()
+    limits = _logger.get_limits()
+    merged = pd.DataFrame({"user_email": known}).merge(
+        limits[["user_email", "weekly_limit_usd", "updated_at"]], on="user_email", how="left"
+    )
+    merged["weekly_limit_usd"] = merged["weekly_limit_usd"].fillna(DEFAULT_WEEKLY_LIMIT_USD)
+    return merged.sort_values("user_email").reset_index(drop=True)
+
+
+def _render_limits_tab(logger: UsageLogger) -> None:
+    # st.success() の直後に st.rerun() すると、再実行後の描画には反映されず
+    # メッセージが実質見えなくなる。session_state に積んで次の描画で出す。
+    flash = st.session_state.pop("_limits_flash", None)
+    if flash:
+        st.success(flash)
+
+    st.subheader("全員に一括設定")
+    col1, col2 = st.columns([2, 1])
+    bulk_value = col1.number_input(
+        "週次上限 (USD)",
+        min_value=0.0,
+        value=DEFAULT_WEEKLY_LIMIT_USD,
+        step=0.5,
+        format="%.2f",
+        key="bulk_limit_value",
+    )
+    if col2.button("全員に適用", type="primary"):
+        users = logger.list_known_users()
+        if not users:
+            st.warning("既知の利用者がいません（まだ利用履歴がありません）。")
+        else:
+            try:
+                logger.save_limits(
+                    pd.DataFrame(
+                        {"user_email": users, "weekly_limit_usd": [bulk_value] * len(users)}
+                    )
+                )
+            except Exception as exc:  # noqa: BLE001 - 管理者向けなので原因を見せる
+                st.error(
+                    "保存に失敗しました。他の管理者が同時に保存した可能性があります。"
+                    "再読み込みして再度お試しください。"
+                )
+                st.code(str(exc))
+            else:
+                st.session_state["_limits_flash"] = (
+                    f"{len(users)} 名に ${bulk_value:.2f} を適用しました。"
+                )
+                _load_limits.clear()
+                st.rerun()
+
+    st.divider()
+    st.subheader("利用者ごとの設定")
+    try:
+        df = _load_limits(logger)
+    except Exception as exc:  # noqa: BLE001 - 管理者向けなので原因を見せる
+        st.error("利用者一覧の取得に失敗しました。")
+        st.code(str(exc))
+        return
+
+    if df.empty:
+        st.info("既知の利用者がいません（まだ利用履歴がありません）。")
+        return
+
+    edited = st.data_editor(
+        df,
+        column_config={
+            "user_email": st.column_config.TextColumn("利用者", disabled=True),
+            "weekly_limit_usd": st.column_config.NumberColumn(
+                "週次上限 (USD)", min_value=0.0, step=0.1, format="$%.2f"
+            ),
+            "updated_at": st.column_config.DatetimeColumn("最終更新", disabled=True),
+        },
+        hide_index=True,
+        width="stretch",
+        num_rows="fixed",  # 手入力での行追加は不可。新規利用者は利用履歴の出現で自動的に一覧化される
+        key="limits_editor",
+    )
+    if st.button("保存"):
+        try:
+            logger.save_limits(edited[["user_email", "weekly_limit_usd"]])
+        except Exception as exc:  # noqa: BLE001 - 管理者向けなので原因を見せる
+            st.error(
+                "保存に失敗しました。他の管理者が同時に保存した可能性があります。"
+                "再読み込みして再度お試しください。"
+            )
+            st.code(str(exc))
+        else:
+            st.session_state["_limits_flash"] = "保存しました。"
+            _load_limits.clear()
+            st.rerun()
+
+    st.caption(
+        f"制限が未設定の利用者には既定値 ${DEFAULT_WEEKLY_LIMIT_USD:.2f} が適用されます。"
+        "週は月曜0:00（JST）にリセットされます。"
     )
