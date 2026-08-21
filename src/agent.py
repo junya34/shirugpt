@@ -346,16 +346,31 @@ class GeminiAgent:
         except _Pending:
             raise
         except (SQLGuardError, BQToolError) as exc:
-            ctx.turn_errors.append(str(exc))
+            ctx.turn_errors.append(self._error_report(name, args, str(exc)))
             payload = {"error": str(exc)}
         except Exception as exc:  # noqa: BLE001 - Gemini に自己修正させる
-            ctx.turn_errors.append(friendly_error(exc))
+            detail = technical_detail(exc)
+            ctx.turn_errors.append(
+                self._error_report(name, args, friendly_error(exc), detail)
+            )
             payload = {
                 "error": friendly_error(exc),
-                "technical_detail": technical_detail(exc),
+                "technical_detail": detail,
             }
 
         return types.Part.from_function_response(name=name, response=payload)
+
+    @staticmethod
+    def _error_report(
+        name: str, args: dict[str, Any], message: str, detail: str | None = None
+    ) -> str:
+        """UI の診断情報向けに、失敗時の SQL・技術的詳細を1つにまとめる。"""
+        lines = [message]
+        if name == "run_query" and args.get("sql"):
+            lines.append(f"SQL: {args['sql']}")
+        if detail:
+            lines.append(f"詳細: {detail}")
+        return "\n".join(lines)
 
     # -- ループ本体 ---------------------------------------------------
     def run(

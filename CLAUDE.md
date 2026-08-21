@@ -128,12 +128,18 @@ dry run の推定スキャン量が閾値を超えると、ループは**その�
 
 同じ例外を宛先ごとに変換し分ける。
 
-- `friendly_error(exc)` → UI 向けの平易な日本語。生の例外は見せない
+- `friendly_error(exc)` → UI 向けの平易な日本語
 - `technical_detail(exc)` → Gemini 向け。構文エラーの内容などをそのまま渡し、
   自力で SQL を修正させる
 
 ツール実行中の例外は `agent._dispatch()` が捕捉して `{"error": ...}` として
 tool response に載せる。ループは止めない（Gemini に再試行させる）。
+
+失敗した `run_query` の SQL と `technical_detail()` は、`_dispatch()` が
+`_error_report()` で1つの文字列にまとめて `ctx.turn_errors` にも積む。これは
+チャット画面の「診断情報」expander（`app.py`）に表示され、**ユーザーにも見える**。
+UI向けの `friendly_error` を平易にする方針は変わらないが、SQL・技術的詳細は
+診断情報として出す、という現在の仕様。
 
 ## 日本語データを扱う上の注意
 
