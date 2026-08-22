@@ -369,64 +369,14 @@ def render_sidebar(
             st.caption(f"ログイン中: {user_email}")
             if st.button("ログアウト", width="stretch"):
                 st.logout()
-        st.header("設定")
-        auth_label = (
-            "サービスアカウントキー"
-            if settings.auth_mode == "service_account"
-            else "ADC（ユーザー認証）"
-        )
-        st.markdown(
-            f"""
-- **プロジェクト**: `{settings.gcp_project}`
-- **許可データセット**: {", ".join(f"`{d}`" for d in settings.allowed_datasets)}
-- **モデル**: `{settings.gemini_model}` ({settings.vertex_location})
-- **認証方式**: {auth_label}
-"""
-        )
-        st.divider()
-        st.subheader("コスト上限")
-        st.markdown(
-            f"""
-- 確認を求める閾値: **{human_bytes(settings.dry_run_confirm_bytes)}**
-- 課金上限: **{human_bytes(settings.max_bytes_billed)}**
-- 自動 LIMIT: **{settings.default_row_limit:,} 行**
-"""
-        )
-        st.divider()
-        st.subheader("キャッシュ状況")
-        st.markdown(
-            f"""
-- 取得済みスキーマ: **{len(ctx.schema_cache)}** テーブル
-- 実行済みクエリ: **{len(ctx.query_cache)}** 件
-"""
-        )
-        st.caption("同じスキーマ・同じ SQL は再取得せず、トークンと課金を節約します。")
-        st.divider()
-        st.subheader("セッション使用量")
-        cost_usd = gemini_cost_usd(
-            ctx.session_prompt_tokens, ctx.session_output_tokens
-        )
-        st.markdown(
-            f"""
-- Gemini トークン: **{ctx.session_total_tokens:,}**
-  （入力 {ctx.session_prompt_tokens:,} / 出力 {ctx.session_output_tokens:,}）
-  ≈ **${cost_usd:.4f}**
-- 実行クエリ量合計: **{human_bytes(ctx.session_billed_bytes)}**
-"""
-        )
-        st.caption(
-            f"会話をリセットするまでの累計です。Gemini の金額は "
-            f"{GEMINI_PRICE_AS_OF} 時点のレート"
-            rf"（入力 \${GEMINI_INPUT_PRICE_PER_1M_USD}/100万トークン、"
-            rf"出力 \${GEMINI_OUTPUT_PRICE_PER_1M_USD}/100万トークン）による概算です。"
-        )
+        
         if user_email and settings.logging_enabled and weekly_used_usd is not None:
             st.divider()
-            st.subheader("今週の使用量（あなたのアカウント）")
+            st.subheader("今週の使用量")
             ratio = weekly_used_usd / weekly_limit_usd if weekly_limit_usd > 0 else 1.0
             st.progress(min(max(ratio, 0.0), 1.0))
             st.markdown(
-                f"**${weekly_used_usd:.4f}** / ${weekly_limit_usd:.2f}"
+                rf"**\${weekly_used_usd:.4f}** / \${weekly_limit_usd:.2f}"
                 f"（{ratio * 100:.0f}%）"
             )
             if ratio >= 1.0:
@@ -435,7 +385,28 @@ def render_sidebar(
                 st.warning("⚠️ 週の上限の80%を使用しています。")
             else:
                 st.caption("月曜0:00（JST）にリセットされます。")
-
+        
+        st.divider()
+        st.subheader("セッション使用量")
+        cost_usd = gemini_cost_usd(
+            ctx.session_prompt_tokens, ctx.session_output_tokens
+        )
+        st.markdown(
+            f"""
+- モデル: `{settings.gemini_model}`
+- 入力トークン合計: **{ctx.session_prompt_tokens:,}**
+- 出力トークン合計: **{ctx.session_output_tokens:,}**
+- 実行クエリ量合計: **{human_bytes(ctx.session_billed_bytes)}**
+- 推定使用金額: **${cost_usd:.4f}**
+"""
+        )
+        st.caption(
+            f"会話をリセットするまでの累計です。Gemini の金額は "
+            f"{GEMINI_PRICE_AS_OF} 時点のレート"
+            rf"（入力 \${GEMINI_INPUT_PRICE_PER_1M_USD}/100万トークン、"
+            rf"出力 \${GEMINI_OUTPUT_PRICE_PER_1M_USD}/100万トークン）による概算です。"
+        )
+        
         st.divider()
         if st.button("会話をリセット", width="stretch"):
             reset_conversation(settings, tools, usage_logger, user_email)
