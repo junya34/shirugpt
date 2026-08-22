@@ -58,16 +58,19 @@ _SCHEMA = [
 
 _LIMIT_SCHEMA = [
     bigquery.SchemaField("user_email", "STRING", mode="REQUIRED"),
+    # 列名は weekly_limit_usd のまま（週次→月次への切り替え時に BigQuery の
+    # 列名までは変更していない。デプロイ済みテーブルの移行を避けるための
+    # 意図的な判断。値の意味は「月間の USD 上限」に変わっている）。
     bigquery.SchemaField("weekly_limit_usd", "FLOAT", mode="REQUIRED"),
     bigquery.SchemaField("updated_at", "TIMESTAMP", mode="REQUIRED"),
 ]
 
 
-def jst_week_bounds_utc(now_utc: datetime | None = None) -> tuple[datetime, datetime]:
-    """「今週」（JST 月曜 0:00 〜 次の月曜 0:00 未満）を UTC の [開始, 終了) で返す。
+def jst_month_bounds_utc(now_utc: datetime | None = None) -> tuple[datetime, datetime]:
+    """「今月」（JST 1日 0:00 〜 次月1日 0:00 未満）を UTC の [開始, 終了) で返す。
 
     `datetime.now()`（サーバーのシステム TZ 依存）は使わず、常に UTC を
-    経由して JST の週境界を計算する。
+    経由して JST の月境界を計算する。
     """
     if now_utc is None:
         now_utc = datetime.now(timezone.utc)
@@ -75,14 +78,18 @@ def jst_week_bounds_utc(now_utc: datetime | None = None) -> tuple[datetime, date
         raise ValueError("now_utc は timezone-aware でなければなりません")
 
     now_jst = now_utc.astimezone(_JST)
-    monday: date = now_jst.date() - timedelta(days=now_jst.weekday())
-    start_jst = datetime.combine(monday, time.min, tzinfo=_JST)
-    end_jst = start_jst + timedelta(days=7)
+    first_of_month: date = now_jst.date().replace(day=1)
+    start_jst = datetime.combine(first_of_month, time.min, tzinfo=_JST)
+    if first_of_month.month == 12:
+        next_month = first_of_month.replace(year=first_of_month.year + 1, month=1)
+    else:
+        next_month = first_of_month.replace(month=first_of_month.month + 1)
+    end_jst = datetime.combine(next_month, time.min, tzinfo=_JST)
     return start_jst.astimezone(timezone.utc), end_jst.astimezone(timezone.utc)
 
 
 @dataclass
-class WeeklyUsage:
+class MonthlyUsage:
     prompt_tokens: int
     output_tokens: int
     billed_bytes: int
@@ -319,17 +326,17 @@ class UsageLogger:
         )
         return job.result().to_dataframe(create_bqstorage_client=False)
 
-    def weekly_usage(
+    def monthly_usage(
         self, user_email: str, start_utc: datetime, end_utc: datetime
-    ) -> WeeklyUsage:
+    ) -> MonthlyUsage:
         """[start_utc, end_utc) の Gemini トークン量 + BigQuery 課金バイト量を
-        1利用者分だけ集計する（週次の使用制限はこの両方を対象にする）。
+        1利用者分だけ集計する（月次の使用制限はこの両方を対象にする）。
 
         `enabled`（書き込み側 circuit breaker）は見ない。読み取りは
         `query_usage()` と同じ扱い。
         """
         if not self.settings.logging_enabled:
-            return WeeklyUsage(prompt_tokens=0, output_tokens=0, billed_bytes=0)
+            return MonthlyUsage(prompt_tokens=0, output_tokens=0, billed_bytes=0)
 
         sql = f"""
             SELECT
@@ -358,8 +365,8 @@ class UsageLogger:
         )
         row = next(iter(job.result()), None)
         if row is None:
-            return WeeklyUsage(prompt_tokens=0, output_tokens=0, billed_bytes=0)
-        return WeeklyUsage(
+            return MonthlyUsage(prompt_tokens=0, output_tokens=0, billed_bytes=0)
+        return MonthlyUsage(
             prompt_tokens=int(row.prompt_tokens or 0),
             output_tokens=int(row.output_tokens or 0),
             billed_bytes=int(row.billed_bytes or 0),
@@ -396,7 +403,7 @@ class UsageLogger:
             return []
 
     def save_limits(self, updates: pd.DataFrame) -> None:
-        """利用者ごとの週次制限額を upsert する（他の利用者の行は変更しない）。
+        """利用者ごとの月次制限額を upsert する（他の利用者の行は変更しない）。
 
         ステージングテーブルへ全件 WRITE_TRUNCATE で書き込んだ上で MERGE する。
         `user_limits` 自体には streaming insert を一切行わないので、

@@ -83,13 +83,19 @@ API 往復を繰り返すとチャットの応答が遅くなるため）。
 `auth_configured()` が `False`（`[auth]` 未設定、主にローカル開発）のときは
 ログインゲート自体をスキップする仕様なので、「メールが空＝バグ」ではない。
 
-### 週次の使用制限（`user_limits`）
+### 月次の使用制限（`user_limits`）
 
-利用者ごとの週間 USD 上限（既定 `DEFAULT_WEEKLY_LIMIT_USD`、`config.py`）を
+利用者ごとの月間 USD 上限（既定 `DEFAULT_MONTHLY_LIMIT_USD`、`config.py`）を
 `user_limits`/`user_limits_staging` テーブルで管理する。両方とも `log_dataset`
 （`BQ_LOG_DATASET`）の中に置くので、上記の Gemini 境界の防御（allowlist から
 除外・`sql_guard` の拒否・起動時ガード）が**追加のコード無しでそのまま適用**
 される。新しいテーブルを `log_dataset` に増やすときはこの前提を崩さないこと。
+
+**BigQuery側の列名は `weekly_limit_usd` のまま。** 元は週次だったが月次に
+切り替えた際、デプロイ済みテーブルの移行を避けるため列名は変更していない。
+値の意味は「月間の USD 上限」に変わっている。これは意図的な不整合であり、
+「週次に戻すべき」と誤って直さないこと。Python側の識別子（関数名・クラス名・
+UI文言）はすべて月次の名前に揃えている。
 
 - **書き込み方式が違う。** `usage_events` は高頻度の `insert_rows_json`
   （ストリーミング）だが、`user_limits` は管理者が低頻度で編集する設定データ
@@ -103,9 +109,9 @@ API 往復を繰り返すとチャットの応答が遅くなるため）。
   `_ensure_limits_infra()`（管理者操作専用）は従わない。チャット側のログ書き込み
   が何度失敗していても、管理者は制限を設定できるべきだから。
 - **集計対象は Gemini トークン代 + BigQuery クエリ代の合計。**
-  `WeeklyUsage.cost_usd()`（`usage_log.py`）が両方を合算する。
+  `MonthlyUsage.cost_usd()`（`usage_log.py`）が両方を合算する。
 - **ブロック判定はセッション内カウンタとのハイブリッド。** `app.py` の
-  `_effective_weekly_usage_usd()` は、週替わり・セッション開始時だけ BigQuery
+  `_effective_monthly_usage_usd()` は、月替わり・セッション開始時だけ BigQuery
   に問い合わせて基準値を取り、以降は同一セッション内の増分
   （`ctx.session_prompt_tokens` / `session_output_tokens` / `session_billed_bytes`、
   既に同期的に加算済み）をインメモリで加算する近似値を使う。

@@ -26,7 +26,7 @@ from src.bq_tools import BigQueryTools, QueryRun, friendly_error
 from src.charts import KIND_LABELS, ChartSpec, suggest_chart
 from src.config import (
     BQ_PRICE_PER_TIB_USD,
-    DEFAULT_WEEKLY_LIMIT_USD,
+    DEFAULT_MONTHLY_LIMIT_USD,
     GEMINI_INPUT_PRICE_PER_1M_USD,
     GEMINI_OUTPUT_PRICE_PER_1M_USD,
     GEMINI_PRICE_AS_OF,
@@ -38,7 +38,7 @@ from src.config import (
     human_bytes,
     load_settings,
 )
-from src.usage_log import UsageLogger, jst_week_bounds_utc
+from src.usage_log import UsageLogger, jst_month_bounds_utc
 
 st.set_page_config(page_title="ShiruGPT", page_icon="📊", layout="wide")
 
@@ -194,7 +194,7 @@ def reset_conversation(
 
 
 # --------------------------------------------------------------------
-# 週次の使用制限
+# 月次の使用制限
 # --------------------------------------------------------------------
 @st.cache_data(ttl=60, show_spinner=False)
 def _cached_limits(_usage_logger: UsageLogger) -> Any:
@@ -206,34 +206,36 @@ def _limit_for(usage_logger: UsageLogger, user_email: str) -> float:
     try:
         limits = _cached_limits(usage_logger)
     except Exception:  # noqa: BLE001 - 読み取り失敗時は既定値にフォールバック
-        return DEFAULT_WEEKLY_LIMIT_USD
+        return DEFAULT_MONTHLY_LIMIT_USD
     if limits.empty:
-        return DEFAULT_WEEKLY_LIMIT_USD
+        return DEFAULT_MONTHLY_LIMIT_USD
+    # BigQuery 側の列名は weekly_limit_usd のまま（週次→月次への切り替え時に
+    # 列名までは変更していない。デプロイ済みテーブルの移行を避けるための判断）。
     match = limits.loc[limits["user_email"] == user_email, "weekly_limit_usd"]
-    return float(match.iloc[0]) if not match.empty else DEFAULT_WEEKLY_LIMIT_USD
+    return float(match.iloc[0]) if not match.empty else DEFAULT_MONTHLY_LIMIT_USD
 
 
-def _effective_weekly_usage_usd(
+def _effective_monthly_usage_usd(
     ctx: ToolContext, usage_logger: UsageLogger, user_email: str
 ) -> float | None:
-    """今週分の使用金額（USD、Gemini トークン + BigQuery クエリ）。
+    """今月分の使用金額（USD、Gemini トークン + BigQuery クエリ）。
     読み取り失敗時は None（＝判定不能、ブロックしない）。
 
-    週替わり・セッション開始時だけ BigQuery に問い合わせ、以降は
+    月替わり・セッション開始時だけ BigQuery に問い合わせ、以降は
     その時点を基準にセッション内の増分（トークン・課金バイト）を
     インメモリで加算する。同一セッション内で毎ターン問い合わせないための
     近似で、複数タブ/複数セッションを同時に使った場合にわずかな誤差が
     出ることは許容する。
     """
-    start_utc, _end_utc = jst_week_bounds_utc()
-    if ctx.limit_baseline_week_start != start_utc:
+    start_utc, _end_utc = jst_month_bounds_utc()
+    if ctx.limit_baseline_month_start != start_utc:
         try:
-            usage = usage_logger.weekly_usage(user_email, start_utc, _end_utc)
+            usage = usage_logger.monthly_usage(user_email, start_utc, _end_utc)
         except Exception:  # noqa: BLE001 - フェイルオープン。読めなければブロックしない
-            logger.warning("週次使用量の取得に失敗しました。", exc_info=True)
+            logger.warning("月次使用量の取得に失敗しました。", exc_info=True)
             return None
         ctx.limit_baseline_usd = usage.cost_usd()
-        ctx.limit_baseline_week_start = start_utc
+        ctx.limit_baseline_month_start = start_utc
         ctx.limit_baseline_session_prompt_tokens = ctx.session_prompt_tokens
         ctx.limit_baseline_session_output_tokens = ctx.session_output_tokens
         ctx.limit_baseline_session_billed_bytes = ctx.session_billed_bytes
@@ -366,30 +368,33 @@ def render_sidebar(
     tools: BigQueryTools,
     usage_logger: UsageLogger,
     user_email: str,
-    weekly_used_usd: float | None,
-    weekly_limit_usd: float,
+    monthly_used_usd: float | None,
+    monthly_limit_usd: float,
 ) -> None:
     with st.sidebar:
         if user_email:
             st.write(f"ログイン中: {user_email}")
             if st.button("ログアウト", width="stretch"):
                 st.logout()
-        
-        if user_email and settings.logging_enabled and weekly_used_usd is not None:
+
+        if user_email and settings.logging_enabled and monthly_used_usd is not None:
             st.divider()
-            st.subheader("今週の使用量")
-            ratio = weekly_used_usd / weekly_limit_usd if weekly_limit_usd > 0 else 1.0
+            st.subheader("今月の利用状況")
+            ratio = monthly_used_usd / monthly_limit_usd if monthly_limit_usd > 0 else 1.0
             st.progress(min(max(ratio, 0.0), 1.0))
             st.markdown(
-                rf"**\${weekly_used_usd:.4f}** / \${weekly_limit_usd:.2f}"
-                f"（{ratio * 100:.0f}%）"
+                f"アカウント: {user_email}\n"
+                rf"- 利用額: \${monthly_used_usd:.2f}" "\n"
+                rf"- 上限: \${monthly_limit_usd:.2f} / 月"
             )
+
             if ratio >= 1.0:
-                st.error("🚫 今週の上限に達しました。次の質問はブロックされます。")
+                st.error("🚫 今月の上限に達しました。次の質問はブロックされます。")
             elif ratio >= 0.8:
-                st.warning("⚠️ 週の上限の80%を使用しています。")
+                st.warning("⚠️ 月の上限の80%を使用しています。")
             else:
-                st.caption("月曜0:00（JST）にリセットされます。")
+                st.caption("毎月1日 0:00（JST）にリセットされます。")
+            st.caption("上限の引き上げは店長提案の承認後、DXにお問い合わせください。")
         
         st.divider()
         st.subheader("セッション使用量")
@@ -402,11 +407,11 @@ def render_sidebar(
 - 入力トークン合計: **{ctx.session_prompt_tokens:,}**
 - 出力トークン合計: **{ctx.session_output_tokens:,}**
 - 実行クエリ量合計: **{human_bytes(ctx.session_billed_bytes)}**
-- 推定使用金額（合計）: **${total_cost_usd:.4f}**
+- 推定利用額: **${total_cost_usd:.4f}**
 """
         )
         st.caption(
-            f"会話をリセットするまでの累計です。Gemini トークン"
+            f"会話をリセットするまでの累計です。モデルのトークン"
             rf"（入力 \${GEMINI_INPUT_PRICE_PER_1M_USD}/100万トークン、"
             rf"出力 \${GEMINI_OUTPUT_PRICE_PER_1M_USD}/100万トークン、"
             f"{GEMINI_PRICE_AS_OF} 時点）と BigQuery クエリ"
@@ -497,14 +502,14 @@ def render_chat_page(
 
     ctx = init_state(settings, tools, usage_logger, user_email)
 
-    weekly_used_usd = None
+    monthly_used_usd = None
     if user_email and settings.logging_enabled:
-        weekly_used_usd = _effective_weekly_usage_usd(ctx, usage_logger, user_email)
-    weekly_limit_usd = _limit_for(usage_logger, user_email) if user_email else 0.0
-    blocked = weekly_used_usd is not None and weekly_used_usd >= weekly_limit_usd
+        monthly_used_usd = _effective_monthly_usage_usd(ctx, usage_logger, user_email)
+    monthly_limit_usd = _limit_for(usage_logger, user_email) if user_email else 0.0
+    blocked = monthly_used_usd is not None and monthly_used_usd >= monthly_limit_usd
 
     render_sidebar(
-        settings, ctx, tools, usage_logger, user_email, weekly_used_usd, weekly_limit_usd
+        settings, ctx, tools, usage_logger, user_email, monthly_used_usd, monthly_limit_usd
     )
 
     for msg_idx, message in enumerate(st.session_state.messages):
@@ -518,8 +523,8 @@ def render_chat_page(
 
     if blocked and pending is None:
         st.error(
-            f"🚫 今週の利用上限（${weekly_limit_usd:.2f}）に達したため、"
-            "今週はこれ以上ご利用いただけません。月曜0:00（JST）にリセットされます。"
+            f"🚫 今月の利用上限（${monthly_limit_usd:.2f}）に達したため、"
+            "今月はこれ以上ご利用いただけません。毎月1日 0:00（JST）にリセットされます。"
         )
 
     prompt = st.chat_input(

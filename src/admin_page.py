@@ -18,7 +18,7 @@ import streamlit as st
 
 from .config import (
     BQ_PRICE_PER_TIB_USD,
-    DEFAULT_WEEKLY_LIMIT_USD,
+    DEFAULT_MONTHLY_LIMIT_USD,
     GEMINI_INPUT_PRICE_PER_1M_USD,
     GEMINI_OUTPUT_PRICE_PER_1M_USD,
     GEMINI_PRICE_AS_OF,
@@ -175,13 +175,13 @@ def _render_usage_tab(logger: UsageLogger) -> None:
 
 @st.cache_data(ttl=60, show_spinner=False)
 def _load_limits(_logger: UsageLogger) -> pd.DataFrame:
-    """既知の利用者一覧に、設定済みの週次制限額（無ければ既定値）を合わせる。"""
+    """既知の利用者一覧に、設定済みの月次制限額（無ければ既定値）を合わせる。"""
     known = _logger.list_known_users()
     limits = _logger.get_limits()
     merged = pd.DataFrame({"user_email": known}).merge(
         limits[["user_email", "weekly_limit_usd", "updated_at"]], on="user_email", how="left"
     )
-    merged["weekly_limit_usd"] = merged["weekly_limit_usd"].fillna(DEFAULT_WEEKLY_LIMIT_USD)
+    merged["weekly_limit_usd"] = merged["weekly_limit_usd"].fillna(DEFAULT_MONTHLY_LIMIT_USD)
     return merged.sort_values("user_email").reset_index(drop=True)
 
 
@@ -195,9 +195,9 @@ def _render_limits_tab(logger: UsageLogger) -> None:
     st.subheader("全員に一括設定")
     col1, col2 = st.columns([2, 1])
     bulk_value = col1.number_input(
-        "週次上限 (USD)",
+        "月次上限 (USD)",
         min_value=0.0,
-        value=DEFAULT_WEEKLY_LIMIT_USD,
+        value=DEFAULT_MONTHLY_LIMIT_USD,
         step=0.5,
         format="%.2f",
         key="bulk_limit_value",
@@ -244,7 +244,7 @@ def _render_limits_tab(logger: UsageLogger) -> None:
         column_config={
             "user_email": st.column_config.TextColumn("利用者", disabled=True),
             "weekly_limit_usd": st.column_config.NumberColumn(
-                "週次上限 (USD)", min_value=0.0, step=0.1, format="$%.2f"
+                "月次上限 (USD)", min_value=0.0, step=0.1, format="$%.2f"
             ),
             "updated_at": st.column_config.DatetimeColumn("最終更新", disabled=True),
         },
@@ -268,6 +268,6 @@ def _render_limits_tab(logger: UsageLogger) -> None:
             st.rerun()
 
     st.caption(
-        f"制限が未設定の利用者には既定値 ${DEFAULT_WEEKLY_LIMIT_USD:.2f} が適用されます。"
-        "週は月曜0:00（JST）にリセットされます。"
+        f"制限が未設定の利用者には既定値 ${DEFAULT_MONTHLY_LIMIT_USD:.2f} が適用されます。"
+        "月は1日0:00（JST）にリセットされます。"
     )

@@ -243,9 +243,10 @@ def bq_cost_usd(billed_bytes: int) -> float:
     return billed_bytes / _BYTES_PER_TIB * BQ_PRICE_PER_TIB_USD
 
 
-# 週次の使用制限（Gemini トークン代のみ、USD）。user_limits に行が無い
-# 利用者に適用される既定値。管理者ページの一括適用フォームの初期値もこれ。
-DEFAULT_WEEKLY_LIMIT_USD = 1.0
+# 月次の使用制限（Gemini トークン代 + BigQuery クエリ代の合計、USD）。
+# user_limits に行が無い利用者に適用される既定値。管理者ページの
+# 一括適用フォームの初期値もこれ。
+DEFAULT_MONTHLY_LIMIT_USD = 1.0
 
 
 def human_bytes(num: float) -> str:
