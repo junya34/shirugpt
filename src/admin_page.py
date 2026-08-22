@@ -161,8 +161,8 @@ def _render_usage_tab(logger: UsageLogger) -> None:
 
     st.caption(
         f"推定金額は {GEMINI_PRICE_AS_OF} 時点のレート"
-        f"（入力 ${GEMINI_INPUT_PRICE_PER_1M_USD}/100万トークン、"
-        f"出力 ${GEMINI_OUTPUT_PRICE_PER_1M_USD}/100万トークン）による概算です。"
+        rf"（入力 \${GEMINI_INPUT_PRICE_PER_1M_USD}/100万トークン、"
+        rf"出力 \${GEMINI_OUTPUT_PRICE_PER_1M_USD}/100万トークン）による概算です。"
         "クエリ量は BigQuery の課金対象バイト数で、金額には含めていません。"
     )
 

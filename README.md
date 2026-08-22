@@ -443,6 +443,20 @@ bq --location=<ロケーション> mk --dataset <プロジェクトID>:shirugpt_
    ボタンが表示され、ログインしたメールアドレスが利用ログと管理者ページの
    識別に使われる。
 
+### 利用者を追加する方法
+
+新しい人がアプリを使えるようにするには、メールアドレスを
+登録する必要があります。1つでも欠けると、その人は使えません。
+
+1. **Google Cloud Console の OAuth 同意画面（テストユーザー）** —
+   `https://console.cloud.google.com/auth/audience?hl=ja&walkthrough_id=bigquery--bigquery-quickstart-query-public-dataset&project=fair-solution-453613-e2`
+   「OAuth 同意画面」→「対象」を開き、
+   「Add user」でログインを許可するメールアドレスを追加する。登録した人のみアクセスできる。
+2. **`ADMIN_EMAILS`（管理者権限が必要な場合のみ）** — Streamlit Cloud の
+   Secrets（または `.env`）の `ADMIN_EMAILS` にカンマ区切りで追加する。
+   管理者ページ（利用状況・使用制限の設定）を開けるかどうかだけを決める、
+   1・2 とは別の権限
+
 `[auth]` を設定しなければこのログインゲート自体が現れず、アプリは
 （利用者を識別できない状態で）これまでどおり動く。ローカル開発では
 通常 `[auth]` を設定しないため、影響はない。
