@@ -233,6 +233,16 @@ def gemini_cost_usd(prompt_tokens: int, output_tokens: int) -> float:
     )
 
 
+# BigQuery のオンデマンドクエリ課金（USD / TiB スキャン）。レート改定時はここを更新する。
+BQ_PRICE_PER_TIB_USD = 6.25
+_BYTES_PER_TIB = 1024**4
+
+
+def bq_cost_usd(billed_bytes: int) -> float:
+    """課金対象バイト数から概算金額（USD）を求める。"""
+    return billed_bytes / _BYTES_PER_TIB * BQ_PRICE_PER_TIB_USD
+
+
 # 週次の使用制限（Gemini トークン代のみ、USD）。user_limits に行が無い
 # 利用者に適用される既定値。管理者ページの一括適用フォームの初期値もこれ。
 DEFAULT_WEEKLY_LIMIT_USD = 1.0

@@ -21,7 +21,7 @@ import pandas as pd
 from google.api_core import exceptions as gexc
 from google.cloud import bigquery
 
-from .config import Settings, gemini_cost_usd
+from .config import Settings, bq_cost_usd, gemini_cost_usd
 
 logger = logging.getLogger(__name__)
 
@@ -85,9 +85,12 @@ def jst_week_bounds_utc(now_utc: datetime | None = None) -> tuple[datetime, date
 class WeeklyUsage:
     prompt_tokens: int
     output_tokens: int
+    billed_bytes: int
 
     def cost_usd(self) -> float:
-        return gemini_cost_usd(self.prompt_tokens, self.output_tokens)
+        return gemini_cost_usd(self.prompt_tokens, self.output_tokens) + bq_cost_usd(
+            self.billed_bytes
+        )
 
 
 class UsageLogger:
@@ -319,21 +322,25 @@ class UsageLogger:
     def weekly_usage(
         self, user_email: str, start_utc: datetime, end_utc: datetime
     ) -> WeeklyUsage:
-        """[start_utc, end_utc) の Gemini トークン量を1利用者分だけ集計する。
+        """[start_utc, end_utc) の Gemini トークン量 + BigQuery 課金バイト量を
+        1利用者分だけ集計する（週次の使用制限はこの両方を対象にする）。
 
         `enabled`（書き込み側 circuit breaker）は見ない。読み取りは
         `query_usage()` と同じ扱い。
         """
         if not self.settings.logging_enabled:
-            return WeeklyUsage(prompt_tokens=0, output_tokens=0)
+            return WeeklyUsage(prompt_tokens=0, output_tokens=0, billed_bytes=0)
 
         sql = f"""
             SELECT
-              SUM(IFNULL(prompt_tokens, 0)) AS prompt_tokens,
-              SUM(IFNULL(output_tokens, 0)) AS output_tokens
+              SUM(IF(event_type = '{EVENT_GEMINI_CALL}', IFNULL(prompt_tokens, 0), 0))
+                AS prompt_tokens,
+              SUM(IF(event_type = '{EVENT_GEMINI_CALL}', IFNULL(output_tokens, 0), 0))
+                AS output_tokens,
+              SUM(IF(event_type = '{EVENT_BQ_QUERY}', IFNULL(billed_bytes, 0), 0))
+                AS billed_bytes
             FROM `{self.table_id}`
-            WHERE event_type = '{EVENT_GEMINI_CALL}'
-              AND user_email = @user_email
+            WHERE user_email = @user_email
               AND event_time >= @start
               AND event_time <  @end
         """
@@ -351,10 +358,11 @@ class UsageLogger:
         )
         row = next(iter(job.result()), None)
         if row is None:
-            return WeeklyUsage(prompt_tokens=0, output_tokens=0)
+            return WeeklyUsage(prompt_tokens=0, output_tokens=0, billed_bytes=0)
         return WeeklyUsage(
             prompt_tokens=int(row.prompt_tokens or 0),
             output_tokens=int(row.output_tokens or 0),
+            billed_bytes=int(row.billed_bytes or 0),
         )
 
     def get_limits(self) -> pd.DataFrame:

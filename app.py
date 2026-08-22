@@ -25,12 +25,14 @@ from src.agent import (
 from src.bq_tools import BigQueryTools, QueryRun, friendly_error
 from src.charts import KIND_LABELS, ChartSpec, suggest_chart
 from src.config import (
+    BQ_PRICE_PER_TIB_USD,
     DEFAULT_WEEKLY_LIMIT_USD,
     GEMINI_INPUT_PRICE_PER_1M_USD,
     GEMINI_OUTPUT_PRICE_PER_1M_USD,
     GEMINI_PRICE_AS_OF,
     ConfigError,
     Settings,
+    bq_cost_usd,
     credentials_leak_warning,
     gemini_cost_usd,
     human_bytes,
@@ -214,12 +216,14 @@ def _limit_for(usage_logger: UsageLogger, user_email: str) -> float:
 def _effective_weekly_usage_usd(
     ctx: ToolContext, usage_logger: UsageLogger, user_email: str
 ) -> float | None:
-    """今週分の使用金額（USD）。読み取り失敗時は None（＝判定不能、ブロックしない）。
+    """今週分の使用金額（USD、Gemini トークン + BigQuery クエリ）。
+    読み取り失敗時は None（＝判定不能、ブロックしない）。
 
     週替わり・セッション開始時だけ BigQuery に問い合わせ、以降は
-    その時点を基準にセッション内のトークン増分をインメモリで加算する。
-    同一セッション内で毎ターン問い合わせないための近似で、複数タブ/
-    複数セッションを同時に使った場合にわずかな誤差が出ることは許容する。
+    その時点を基準にセッション内の増分（トークン・課金バイト）を
+    インメモリで加算する。同一セッション内で毎ターン問い合わせないための
+    近似で、複数タブ/複数セッションを同時に使った場合にわずかな誤差が
+    出ることは許容する。
     """
     start_utc, _end_utc = jst_week_bounds_utc()
     if ctx.limit_baseline_week_start != start_utc:
@@ -232,11 +236,12 @@ def _effective_weekly_usage_usd(
         ctx.limit_baseline_week_start = start_utc
         ctx.limit_baseline_session_prompt_tokens = ctx.session_prompt_tokens
         ctx.limit_baseline_session_output_tokens = ctx.session_output_tokens
+        ctx.limit_baseline_session_billed_bytes = ctx.session_billed_bytes
 
     delta = gemini_cost_usd(
         ctx.session_prompt_tokens - ctx.limit_baseline_session_prompt_tokens,
         ctx.session_output_tokens - ctx.limit_baseline_session_output_tokens,
-    )
+    ) + bq_cost_usd(ctx.session_billed_bytes - ctx.limit_baseline_session_billed_bytes)
     return ctx.limit_baseline_usd + delta
 
 
@@ -366,7 +371,7 @@ def render_sidebar(
 ) -> None:
     with st.sidebar:
         if user_email:
-            st.caption(f"ログイン中: {user_email}")
+            st.write(f"ログイン中: {user_email}")
             if st.button("ログアウト", width="stretch"):
                 st.logout()
         
@@ -388,23 +393,24 @@ def render_sidebar(
         
         st.divider()
         st.subheader("セッション使用量")
-        cost_usd = gemini_cost_usd(
+        total_cost_usd = gemini_cost_usd(
             ctx.session_prompt_tokens, ctx.session_output_tokens
-        )
+        ) + bq_cost_usd(ctx.session_billed_bytes)
         st.markdown(
             f"""
 - モデル: `{settings.gemini_model}`
 - 入力トークン合計: **{ctx.session_prompt_tokens:,}**
 - 出力トークン合計: **{ctx.session_output_tokens:,}**
 - 実行クエリ量合計: **{human_bytes(ctx.session_billed_bytes)}**
-- 推定使用金額: **${cost_usd:.4f}**
+- 推定使用金額（合計）: **${total_cost_usd:.4f}**
 """
         )
         st.caption(
-            f"会話をリセットするまでの累計です。Gemini の金額は "
-            f"{GEMINI_PRICE_AS_OF} 時点のレート"
+            f"会話をリセットするまでの累計です。Gemini トークン"
             rf"（入力 \${GEMINI_INPUT_PRICE_PER_1M_USD}/100万トークン、"
-            rf"出力 \${GEMINI_OUTPUT_PRICE_PER_1M_USD}/100万トークン）による概算です。"
+            rf"出力 \${GEMINI_OUTPUT_PRICE_PER_1M_USD}/100万トークン、"
+            f"{GEMINI_PRICE_AS_OF} 時点）と BigQuery クエリ"
+            rf"（\${BQ_PRICE_PER_TIB_USD}/TiB）の合計金額です。"
         )
         
         st.divider()

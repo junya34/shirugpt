@@ -17,11 +17,13 @@ import pandas as pd
 import streamlit as st
 
 from .config import (
+    BQ_PRICE_PER_TIB_USD,
     DEFAULT_WEEKLY_LIMIT_USD,
     GEMINI_INPUT_PRICE_PER_1M_USD,
     GEMINI_OUTPUT_PRICE_PER_1M_USD,
     GEMINI_PRICE_AS_OF,
     Settings,
+    bq_cost_usd,
     gemini_cost_usd,
     human_bytes,
 )
@@ -65,8 +67,10 @@ def _rollup(df: pd.DataFrame, unit: str) -> pd.DataFrame:
         .sort_values(["期間", "user_email"], ascending=[False, True])
     )
     grouped["推定金額(USD)"] = [
-        gemini_cost_usd(p, o)
-        for p, o in zip(grouped["prompt_tokens"], grouped["output_tokens"])
+        gemini_cost_usd(p, o) + bq_cost_usd(b)
+        for p, o, b in zip(
+            grouped["prompt_tokens"], grouped["output_tokens"], grouped["billed_bytes"]
+        )
     ]
     return grouped
 
@@ -152,18 +156,20 @@ def _render_usage_tab(logger: UsageLogger) -> None:
     total_prompt = int(grouped["prompt_tokens"].sum())
     total_output = int(grouped["output_tokens"].sum())
     total_bytes = int(grouped["billed_bytes"].sum())
+    total_cost_usd = gemini_cost_usd(total_prompt, total_output) + bq_cost_usd(total_bytes)
     m1, m2, m3 = st.columns(3)
     m1.metric("合計トークン", f"{int(grouped['total_tokens'].sum()):,}")
-    m2.metric("推定金額", f"${gemini_cost_usd(total_prompt, total_output):,.4f}")
+    m2.metric("推定金額", f"${total_cost_usd:,.4f}")
     m3.metric("クエリ量", human_bytes(total_bytes))
 
     st.dataframe(_display_frame(grouped), width="stretch", hide_index=True)
 
     st.caption(
-        f"推定金額は {GEMINI_PRICE_AS_OF} 時点のレート"
-        rf"（入力 \${GEMINI_INPUT_PRICE_PER_1M_USD}/100万トークン、"
-        rf"出力 \${GEMINI_OUTPUT_PRICE_PER_1M_USD}/100万トークン）による概算です。"
-        "クエリ量は BigQuery の課金対象バイト数で、金額には含めていません。"
+        f"推定金額は Gemini トークン（{GEMINI_PRICE_AS_OF} 時点のレート、"
+        rf"入力 \${GEMINI_INPUT_PRICE_PER_1M_USD}/100万トークン、"
+        rf"出力 \${GEMINI_OUTPUT_PRICE_PER_1M_USD}/100万トークン）と "
+        rf"BigQuery クエリ（\${BQ_PRICE_PER_TIB_USD}/TiB）の合計金額です。"
+        f"実際の請求金額は Google Cloud Console の[課金]ページをご覧ください。"
     )
 
 

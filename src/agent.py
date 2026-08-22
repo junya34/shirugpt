@@ -132,6 +132,7 @@ class ToolContext:
     limit_baseline_week_start: datetime | None = None
     limit_baseline_session_prompt_tokens: int = 0
     limit_baseline_session_output_tokens: int = 0
+    limit_baseline_session_billed_bytes: int = 0
 
     def start_turn(self) -> None:
         self.turn_runs = []
