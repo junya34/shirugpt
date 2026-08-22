@@ -246,7 +246,7 @@ def bq_cost_usd(billed_bytes: int) -> float:
 # 月次の使用制限（Gemini トークン代 + BigQuery クエリ代の合計、USD）。
 # user_limits に行が無い利用者に適用される既定値。管理者ページの
 # 一括適用フォームの初期値もこれ。
-DEFAULT_MONTHLY_LIMIT_USD = 1.0
+DEFAULT_MONTHLY_LIMIT_USD = 3.0
 
 
 def human_bytes(num: float) -> str:
