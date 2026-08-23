@@ -407,10 +407,11 @@ class GeminiAgent:
                 usage = response.usage_metadata
                 if usage is not None:
                     prompt_tokens = usage.prompt_token_count or 0
+                    thinking_tokens = usage.thoughts_token_count or 0
                     # thinking トークンも出力と同じ単価で課金されるため出力側に含める
-                    output_tokens = (usage.candidates_token_count or 0) + (
-                        usage.thoughts_token_count or 0
-                    )
+                    # （UI・コスト計算・週次制限はこの合算値のまま。ログにだけ
+                    # thinking_tokens で内訳を別途残す）
+                    output_tokens = (usage.candidates_token_count or 0) + thinking_tokens
                     total_tokens = usage.total_token_count or 0
                     ctx.session_prompt_tokens += prompt_tokens
                     ctx.session_output_tokens += output_tokens
@@ -423,6 +424,7 @@ class GeminiAgent:
                             prompt_tokens=prompt_tokens,
                             output_tokens=output_tokens,
                             total_tokens=total_tokens,
+                            thinking_tokens=thinking_tokens,
                         )
                 candidate = (response.candidates or [None])[0]
                 if candidate is None or candidate.content is None:

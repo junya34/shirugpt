@@ -51,7 +51,12 @@ _SCHEMA = [
     bigquery.SchemaField("turn_id", "STRING", mode="REQUIRED"),
     bigquery.SchemaField("model", "STRING"),
     bigquery.SchemaField("prompt_tokens", "INTEGER"),
+    # output_tokens は課金・UI・週次制限の既存計算と互換性を保つため、
+    # これまでと同じ意味（thinking 分を含む合計）のまま変更しない。
+    # thinking の内訳だけを別途 thinking_tokens に記録する（診断用、
+    # 課金計算には使わない。output_tokens との二重計上ではなく内訳）。
     bigquery.SchemaField("output_tokens", "INTEGER"),
+    bigquery.SchemaField("thinking_tokens", "INTEGER"),
     bigquery.SchemaField("total_tokens", "INTEGER"),
     bigquery.SchemaField("billed_bytes", "INTEGER"),
 ]
@@ -238,6 +243,7 @@ class UsageLogger:
         prompt_tokens: int,
         output_tokens: int,
         total_tokens: int,
+        thinking_tokens: int = 0,
     ) -> None:
         self._insert(
             {
@@ -249,6 +255,7 @@ class UsageLogger:
                 "model": self.settings.gemini_model,
                 "prompt_tokens": int(prompt_tokens),
                 "output_tokens": int(output_tokens),
+                "thinking_tokens": int(thinking_tokens),
                 "total_tokens": int(total_tokens),
             }
         )
