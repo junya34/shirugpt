@@ -27,6 +27,7 @@ from .config import (
     gemini_cost_usd,
     human_bytes,
 )
+from .fx import usd_to_jpy
 from .usage_log import UsageLogger
 
 # 日付範囲の上限。ログテーブルが将来肥大化したときのスキャン量の保険。
@@ -160,6 +161,7 @@ def _render_usage_tab(logger: UsageLogger) -> None:
     m1, m2, m3 = st.columns(3)
     m1.metric("合計トークン", f"{int(grouped['total_tokens'].sum()):,}")
     m2.metric("推定金額", f"${total_cost_usd:,.4f}")
+    m2.caption(f"≈ ¥{usd_to_jpy(total_cost_usd):,.1f}")
     m3.metric("クエリ量", human_bytes(total_bytes))
 
     st.dataframe(_display_frame(grouped), width="stretch", hide_index=True)
@@ -202,6 +204,7 @@ def _render_limits_tab(logger: UsageLogger) -> None:
         format="%.2f",
         key="bulk_limit_value",
     )
+    col1.caption(f"≈ ¥{usd_to_jpy(bulk_value):,.0f}")
     if col2.button("全員に適用", type="primary"):
         users = logger.list_known_users()
         if not users:

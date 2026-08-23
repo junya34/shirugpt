@@ -38,6 +38,7 @@ from src.config import (
     human_bytes,
     load_settings,
 )
+from src.fx import usd_to_jpy
 from src.usage_log import UsageLogger, jst_month_bounds_utc
 
 st.set_page_config(page_title="ShiruGPT", page_icon="📊", layout="wide")
@@ -384,8 +385,10 @@ def render_sidebar(
             st.progress(min(max(ratio, 0.0), 1.0))
             st.markdown(
                 f"アカウント: {user_email}\n"
-                rf"- 利用額: \${monthly_used_usd:.2f}" "\n"
+                rf"- 利用額: \${monthly_used_usd:.2f}"
+                f"（≈ ¥{usd_to_jpy(monthly_used_usd):,.0f}）\n"
                 rf"- 上限: \${monthly_limit_usd:.2f} / 月"
+                f"（≈ ¥{usd_to_jpy(monthly_limit_usd):,.0f}）"
             )
 
             if ratio >= 1.0:
@@ -407,7 +410,7 @@ def render_sidebar(
 - 入力トークン合計: **{ctx.session_prompt_tokens:,}**
 - 出力トークン合計: **{ctx.session_output_tokens:,}**
 - 実行クエリ量合計: **{human_bytes(ctx.session_billed_bytes)}**
-- 推定利用額: **${total_cost_usd:.4f}**
+- 推定利用額: **${total_cost_usd:.4f}**（≈ ¥{usd_to_jpy(total_cost_usd):,.1f}）
 """
         )
         st.caption(
@@ -523,7 +526,8 @@ def render_chat_page(
 
     if blocked and pending is None:
         st.error(
-            f"🚫 今月の利用上限（${monthly_limit_usd:.2f}）に達したため、"
+            f"🚫 今月の利用上限（${monthly_limit_usd:.2f} ≈ "
+            f"¥{usd_to_jpy(monthly_limit_usd):,.0f}）に達したため、"
             "今月はこれ以上ご利用いただけません。毎月1日 0:00（JST）にリセットされます。"
         )
 
