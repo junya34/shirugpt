@@ -547,6 +547,12 @@ def render_chat_page(
         types.Content(role="user", parts=[types.Part.from_text(text=prompt)])
     )
     ctx.start_turn()
+    usage_logger.log_prompt(
+        user_email=user_email,
+        session_id=ctx.session_id,
+        turn_id=ctx.turn_id,
+        prompt_text=prompt,
+    )
 
     with st.chat_message("user"):
         st.markdown(prompt)

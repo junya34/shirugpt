@@ -374,3 +374,20 @@ def technical_detail(exc: Exception, limit: int = 600) -> str:
     """Gemini の自己修正用に、技術的なエラー内容を短く整形する。"""
     text = f"{type(exc).__name__}: {exc}"
     return text[:limit]
+
+
+def error_code(exc: Exception) -> int | None:
+    """例外が持つ HTTP ステータス相当のコードを取り出す（利用ログ記録用）。
+
+    google.genai.errors.APIError も google.api_core.exceptions.GoogleAPICallError
+    も `.code` 属性を持つが、片方は素の int、もう片方は HTTPStatus（IntEnum）
+    なので int() で正規化する。属性が無い・変換できない例外（SQLGuardError /
+    BQToolError など自前の例外）は None を返す。
+    """
+    code = getattr(exc, "code", None)
+    if code is None:
+        return None
+    try:
+        return int(code)
+    except (TypeError, ValueError):
+        return None

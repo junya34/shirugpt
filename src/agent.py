@@ -25,6 +25,7 @@ from .bq_tools import (
     BQToolError,
     ConfirmationRequired,
     QueryRun,
+    error_code,
     friendly_error,
     technical_detail,
 )
@@ -366,6 +367,15 @@ class GeminiAgent:
         except (SQLGuardError, BQToolError) as exc:
             ctx.turn_errors.append(self._error_report(name, args, str(exc)))
             payload = {"error": str(exc)}
+            if ctx.usage_logger is not None:
+                ctx.usage_logger.log_error(
+                    user_email=ctx.user_email,
+                    session_id=ctx.session_id,
+                    turn_id=ctx.turn_id,
+                    error_source="tool_error",
+                    error_code=error_code(exc),
+                    error_text=technical_detail(exc, limit=10_000),
+                )
         except Exception as exc:  # noqa: BLE001 - Gemini に自己修正させる
             detail = technical_detail(exc)
             ctx.turn_errors.append(
@@ -375,6 +385,15 @@ class GeminiAgent:
                 "error": friendly_error(exc),
                 "technical_detail": detail,
             }
+            if ctx.usage_logger is not None:
+                ctx.usage_logger.log_error(
+                    user_email=ctx.user_email,
+                    session_id=ctx.session_id,
+                    turn_id=ctx.turn_id,
+                    error_source="tool_error",
+                    error_code=error_code(exc),
+                    error_text=technical_detail(exc, limit=10_000),
+                )
 
         return types.Part.from_function_response(name=name, response=payload)
 
@@ -403,7 +422,19 @@ class GeminiAgent:
 
         for _ in range(self.settings.max_tool_iterations):
             if pending_calls is None:
-                response = self._generate(contents)
+                try:
+                    response = self._generate(contents)
+                except Exception as exc:  # noqa: BLE001 - 記録してから同じ例外を上に伝える
+                    if ctx.usage_logger is not None:
+                        ctx.usage_logger.log_error(
+                            user_email=ctx.user_email,
+                            session_id=ctx.session_id,
+                            turn_id=ctx.turn_id,
+                            error_source="gemini_call_error",
+                            error_code=error_code(exc),
+                            error_text=technical_detail(exc, limit=10_000),
+                        )
+                    raise
                 usage = response.usage_metadata
                 if usage is not None:
                     prompt_tokens = usage.prompt_token_count or 0
@@ -454,6 +485,14 @@ class GeminiAgent:
                         )
                         logger.warning("%s parts=%r", detail, parts)
                         ctx.turn_errors.append(detail)
+                        if ctx.usage_logger is not None:
+                            ctx.usage_logger.log_error(
+                                user_email=ctx.user_email,
+                                session_id=ctx.session_id,
+                                turn_id=ctx.turn_id,
+                                error_source="empty_response",
+                                error_text=detail,
+                            )
                     return AnswerResult(
                         text or "回答を生成できませんでした。質問を言い換えてお試しください。"
                     )

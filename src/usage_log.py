@@ -33,6 +33,7 @@ UNKNOWN_USER = "(unknown)"
 
 EVENT_GEMINI_CALL = "gemini_call"
 EVENT_BQ_QUERY = "bq_query"
+EVENT_ERROR = "error"
 
 # insert_rows_json のタイムアウト（秒）。BigQuery の一時障害が
 # ユーザーのチャット応答を長時間ブロックしないようにする。
@@ -59,6 +60,21 @@ _SCHEMA = [
     bigquery.SchemaField("thinking_tokens", "INTEGER"),
     bigquery.SchemaField("total_tokens", "INTEGER"),
     bigquery.SchemaField("billed_bytes", "INTEGER"),
+    # event_type = "error" のときだけ使う列。
+    # error_source: "empty_response" | "tool_error" | "gemini_call_error"
+    bigquery.SchemaField("error_source", "STRING"),
+    bigquery.SchemaField("error_code", "INTEGER"),
+    # Gemini に渡す technical_detail（600文字）とは別に、こちらは BigQuery
+    # 保存用でトークン予算の制約が無いため切り詰めない（実測では数百文字程度）。
+    bigquery.SchemaField("error_text", "STRING"),
+]
+
+_PROMPT_SCHEMA = [
+    bigquery.SchemaField("turn_id", "STRING", mode="REQUIRED"),
+    bigquery.SchemaField("session_id", "STRING", mode="REQUIRED"),
+    bigquery.SchemaField("user_email", "STRING", mode="REQUIRED"),
+    bigquery.SchemaField("event_time", "TIMESTAMP", mode="REQUIRED"),
+    bigquery.SchemaField("prompt_text", "STRING", mode="REQUIRED"),
 ]
 
 _LIMIT_SCHEMA = [
@@ -146,6 +162,13 @@ class UsageLogger:
     def _limits_staging_table_id(self) -> str:
         return f"{self.limits_table_id}_staging"
 
+    @property
+    def prompt_log_table_id(self) -> str:
+        return (
+            f"{self.settings.gcp_project}."
+            f"{self.settings.log_dataset}.{self.settings.prompt_log_table}"
+        )
+
     def _get_client(self) -> bigquery.Client:
         if self._client is None:
             self._client = bigquery.Client(
@@ -163,7 +186,7 @@ class UsageLogger:
         client.create_dataset(dataset_ref, exists_ok=True)
 
     def ensure_table(self) -> None:
-        """データセット・イベントログ・制限テーブルを用意する。
+        """データセット・イベントログ・制限テーブル・プロンプトログを用意する。
 
         チャットの高頻度書き込み経路から呼ばれるため、失敗しても例外を
         投げない（`_record_failure()` で circuit breaker に記録するだけ）。
@@ -192,6 +215,14 @@ class UsageLogger:
                 bigquery.Table(self._limits_staging_table_id, schema=_LIMIT_SCHEMA),
                 exists_ok=True,
             )
+
+            prompt_table = bigquery.Table(self.prompt_log_table_id, schema=_PROMPT_SCHEMA)
+            prompt_table.time_partitioning = bigquery.TimePartitioning(
+                type_=bigquery.TimePartitioningType.DAY, field="event_time"
+            )
+            prompt_table.clustering_fields = ["user_email"]
+            client.create_table(prompt_table, exists_ok=True)
+
             self._ready = True
             self._failures = 0
         except Exception:  # noqa: BLE001 - ログ機能の失敗でアプリを止めない
@@ -216,7 +247,7 @@ class UsageLogger:
             exists_ok=True,
         )
 
-    def _insert(self, row: dict[str, Any]) -> None:
+    def _insert(self, row: dict[str, Any], table_id: str | None = None) -> None:
         if not self.enabled:
             return
         self.ensure_table()
@@ -224,7 +255,7 @@ class UsageLogger:
             return
         try:
             errors = self._get_client().insert_rows_json(
-                self.table_id, [row], timeout=_INSERT_TIMEOUT
+                table_id or self.table_id, [row], timeout=_INSERT_TIMEOUT
             )
             if errors:
                 logger.warning("利用ログの書き込みでエラー: %s", errors)
@@ -234,6 +265,26 @@ class UsageLogger:
             self._record_failure()
 
     # -- 記録（例外を外に出さない） ------------------------------------
+    def log_prompt(
+        self,
+        *,
+        user_email: str,
+        session_id: str,
+        turn_id: str,
+        prompt_text: str,
+    ) -> None:
+        """ユーザーが入力したプロンプトを1ターン1行で記録する。"""
+        self._insert(
+            {
+                "turn_id": turn_id,
+                "session_id": session_id,
+                "user_email": user_email or UNKNOWN_USER,
+                "event_time": _now_iso(),
+                "prompt_text": prompt_text,
+            },
+            table_id=self.prompt_log_table_id,
+        )
+
     def log_gemini_call(
         self,
         *,
@@ -276,6 +327,35 @@ class UsageLogger:
                 "session_id": session_id,
                 "turn_id": turn_id,
                 "billed_bytes": int(billed_bytes),
+            }
+        )
+
+    def log_error(
+        self,
+        *,
+        user_email: str,
+        session_id: str,
+        turn_id: str,
+        error_source: str,
+        error_code: int | None = None,
+        error_text: str | None = None,
+    ) -> None:
+        """エラー・診断情報を1行記録する。
+
+        error_source: "empty_response"（Gemini が空応答を返した）/
+        "tool_error"（ツール実行エラー）/ "gemini_call_error"（Gemini API
+        呼び出し自体の失敗）のいずれか。
+        """
+        self._insert(
+            {
+                "event_time": _now_iso(),
+                "event_type": EVENT_ERROR,
+                "user_email": user_email or UNKNOWN_USER,
+                "session_id": session_id,
+                "turn_id": turn_id,
+                "error_source": error_source,
+                "error_code": error_code,
+                "error_text": error_text,
             }
         )
 
