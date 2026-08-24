@@ -25,11 +25,7 @@ from src.agent import (
 from src.bq_tools import BigQueryTools, QueryRun, friendly_error
 from src.charts import KIND_LABELS, ChartSpec, suggest_chart
 from src.config import (
-    BQ_PRICE_PER_TIB_USD,
     DEFAULT_MONTHLY_LIMIT_USD,
-    GEMINI_INPUT_PRICE_PER_1M_USD,
-    GEMINI_OUTPUT_PRICE_PER_1M_USD,
-    GEMINI_PRICE_AS_OF,
     ConfigError,
     Settings,
     bq_cost_usd,
@@ -38,7 +34,6 @@ from src.config import (
     human_bytes,
     load_settings,
 )
-from src.fx import usd_to_jpy
 from src.usage_log import UsageLogger, jst_month_bounds_utc
 
 st.set_page_config(page_title="ShiruGPT", page_icon="📊", layout="wide")
@@ -53,6 +48,11 @@ gcloud auth application-default login
 gcloud auth application-default set-quota-project <プロジェクトID>
 ```
 """
+
+FEEDBACK_FORM_URL = (
+    "https://docs.google.com/forms/d/e/"
+    "1FAIpQLSdLBnajt42qgcmUkia3h8zpOJFFiWHrKvKSwjHCiyea0bQcog/viewform"
+)
 
 
 # --------------------------------------------------------------------
@@ -385,10 +385,7 @@ def render_sidebar(
             st.progress(min(max(ratio, 0.0), 1.0))
             st.markdown(
                 f"アカウント: {user_email}\n"
-                rf"- 利用額: \${monthly_used_usd:.2f}"
-                f"（≈ ¥{usd_to_jpy(monthly_used_usd):,.0f}）\n"
-                rf"- 上限: \${monthly_limit_usd:.2f} / 月"
-                f"（≈ ¥{usd_to_jpy(monthly_limit_usd):,.0f}）"
+                f"- 利用量: {ratio * 100:.0f}%"
             )
 
             if ratio >= 1.0:
@@ -398,33 +395,27 @@ def render_sidebar(
             else:
                 st.caption("毎月1日 0:00（JST）にリセットされます。")
             st.caption("上限の引き上げは店長提案の承認後、DXにお問い合わせください。")
-        
+
         st.divider()
         st.subheader("セッション使用量")
-        total_cost_usd = gemini_cost_usd(
-            ctx.session_prompt_tokens, ctx.session_output_tokens
-        ) + bq_cost_usd(ctx.session_billed_bytes)
         st.markdown(
             f"""
 - モデル: `{settings.gemini_model}`
 - 入力トークン合計: **{ctx.session_prompt_tokens:,}**
 - 出力トークン合計: **{ctx.session_output_tokens:,}**
 - 実行クエリ量合計: **{human_bytes(ctx.session_billed_bytes)}**
-- 推定利用額: **${total_cost_usd:.4f}**（≈ ¥{usd_to_jpy(total_cost_usd):,.1f}）
 """
         )
-        st.caption(
-            f"会話をリセットするまでの累計です。モデルのトークン"
-            rf"（入力 \${GEMINI_INPUT_PRICE_PER_1M_USD}/100万トークン、"
-            rf"出力 \${GEMINI_OUTPUT_PRICE_PER_1M_USD}/100万トークン、"
-            f"{GEMINI_PRICE_AS_OF} 時点）と BigQuery クエリ"
-            rf"（\${BQ_PRICE_PER_TIB_USD}/TiB）の合計金額です。"
-        )
+        st.caption("会話をリセットするまでの累計です。")
         
         st.divider()
         if st.button("会話をリセット", width="stretch"):
             reset_conversation(settings, tools, usage_logger, user_email)
             st.rerun()
+
+        st.link_button(
+            "📝 質問・報告フォーム", FEEDBACK_FORM_URL, width="stretch"
+        )
 
 
 # --------------------------------------------------------------------
@@ -526,8 +517,7 @@ def render_chat_page(
 
     if blocked and pending is None:
         st.error(
-            f"🚫 今月の利用上限（${monthly_limit_usd:.2f} ≈ "
-            f"¥{usd_to_jpy(monthly_limit_usd):,.0f}）に達したため、"
+            "🚫 今月の利用上限に達したため、"
             "今月はこれ以上ご利用いただけません。毎月1日 0:00（JST）にリセットされます。"
         )
 
