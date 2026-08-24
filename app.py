@@ -384,7 +384,6 @@ def render_sidebar(
             ratio = monthly_used_usd / monthly_limit_usd if monthly_limit_usd > 0 else 1.0
             st.progress(min(max(ratio, 0.0), 1.0))
             st.markdown(
-                f"アカウント: {user_email}\n"
                 f"- 利用量: {ratio * 100:.0f}%"
             )
 
@@ -394,7 +393,7 @@ def render_sidebar(
                 st.warning("⚠️ 月の上限の80%を使用しています。")
             else:
                 st.caption("毎月1日 0:00（JST）にリセットされます。")
-            st.caption("上限の引き上げは店長提案の承認後、DXにお問い合わせください。")
+            # st.caption("上限の引き上げは店長提案の承認後、DXにお問い合わせください。")
 
         st.divider()
         st.subheader("セッション使用量")

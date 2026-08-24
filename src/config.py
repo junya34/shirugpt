@@ -173,7 +173,7 @@ def load_settings() -> Settings:
         max_bytes_billed=_int("MAX_BYTES_BILLED", 10 * 1024**3),
         default_row_limit=_int("DEFAULT_ROW_LIMIT", 1000),
         max_result_rows=_int("MAX_RESULT_ROWS", 5000),
-        sample_rows=_int("SAMPLE_ROWS", 15),
+        sample_rows=_int("SAMPLE_ROWS", 35),
         max_tool_iterations=_int("MAX_TOOL_ITERATIONS", 12),
         log_dataset=log_dataset,
         log_table=_str("BQ_LOG_TABLE", "usage_events"),
@@ -248,7 +248,7 @@ def bq_cost_usd(billed_bytes: int) -> float:
 # 月次の使用制限（Gemini トークン代 + BigQuery クエリ代の合計、USD）。
 # user_limits に行が無い利用者に適用される既定値。管理者ページの
 # 一括適用フォームの初期値もこれ。
-DEFAULT_MONTHLY_LIMIT_USD = 3.0
+DEFAULT_MONTHLY_LIMIT_USD = 5.0
 
 
 def human_bytes(num: float) -> str:
