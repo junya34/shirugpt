@@ -62,6 +62,8 @@ _SCHEMA = [
     bigquery.SchemaField("billed_bytes", "INTEGER"),
     # event_type = "error" のときだけ使う列。
     # error_source: "empty_response" | "tool_error" | "gemini_call_error"
+    #               | "process_turn_error"（app.py の想定外の異常。ホット
+    #               リロード不整合等の実行環境側の一時的な異常を含む）
     bigquery.SchemaField("error_source", "STRING"),
     bigquery.SchemaField("error_code", "INTEGER"),
     # Gemini に渡す technical_detail（600文字）とは別に、こちらは BigQuery
@@ -344,7 +346,8 @@ class UsageLogger:
 
         error_source: "empty_response"（Gemini が空応答を返した）/
         "tool_error"（ツール実行エラー）/ "gemini_call_error"（Gemini API
-        呼び出し自体の失敗）のいずれか。
+        呼び出し自体の失敗）/ "process_turn_error"（app.py 側の想定外の
+        異常。実行環境側の一時的な不整合等）のいずれか。
         """
         self._insert(
             {

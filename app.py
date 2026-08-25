@@ -22,7 +22,13 @@ from src.agent import (
     GeminiAgent,
     ToolContext,
 )
-from src.bq_tools import BigQueryTools, QueryRun, friendly_error
+from src.bq_tools import (
+    BigQueryTools,
+    QueryRun,
+    error_code,
+    friendly_error,
+    technical_detail,
+)
 from src.charts import KIND_LABELS, ChartSpec, suggest_chart
 from src.config import (
     DEFAULT_MONTHLY_LIMIT_USD,
@@ -423,7 +429,36 @@ def render_sidebar(
 def process_turn(agent: GeminiAgent, ctx: ToolContext) -> None:
     try:
         result = agent.run(st.session_state.contents, ctx)
+        if isinstance(result, ConfirmationPending):
+            st.session_state.pending = result
+        elif isinstance(result, AnswerResult):
+            st.session_state.pending = None
+            st.session_state.messages.append(
+                {
+                    "role": "assistant",
+                    "text": result.text,
+                    "runs": list(ctx.turn_runs),
+                    "errors": list(ctx.turn_errors),
+                }
+            )
+        else:
+            # 通常発生しない想定外の戻り値（実行環境側の一時的な異常等）。
+            # 他の例外と同じ経路で扱い、アプリ全体を落とさない。
+            raise AssertionError(f"想定外の戻り値: {result!r}")
     except Exception as exc:  # noqa: BLE001 - ユーザーには整形して見せる
+        detail = technical_detail(exc, limit=10_000)
+        if ctx.usage_logger is not None:
+            ctx.usage_logger.log_error(
+                user_email=ctx.user_email,
+                session_id=ctx.session_id,
+                turn_id=ctx.turn_id,
+                error_source="process_turn_error",
+                error_code=error_code(exc),
+                error_text=detail,
+            )
+        # 既存のツール実行エラーと同じく、UI の「診断情報」expander にも
+        # 技術的詳細を出す（CLAUDE.md の「エラーの二経路」方針に揃える）。
+        ctx.turn_errors.append(f"{friendly_error(exc)}\n詳細: {detail}")
         st.session_state.pending = None
         st.session_state.messages.append(
             {
@@ -432,22 +467,6 @@ def process_turn(agent: GeminiAgent, ctx: ToolContext) -> None:
                 "runs": list(ctx.turn_runs),
                 "errors": list(ctx.turn_errors),
                 "is_error": True,
-            }
-        )
-        st.rerun()
-        return
-
-    if isinstance(result, ConfirmationPending):
-        st.session_state.pending = result
-    else:
-        assert isinstance(result, AnswerResult)
-        st.session_state.pending = None
-        st.session_state.messages.append(
-            {
-                "role": "assistant",
-                "text": result.text,
-                "runs": list(ctx.turn_runs),
-                "errors": list(ctx.turn_errors),
             }
         )
     st.rerun()
