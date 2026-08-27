@@ -83,6 +83,10 @@ gcloud auth application-default login   # 開発者本人の認証（ADC）
 Gemini に送ったデータの扱いについては **[docs/security.md](docs/security.md)** を
 参照してください。
 
+利用者ごとの使用量ログ・月次使用制限・管理者ページの仕組み（Gemini 境界の
+3 重防御、`weekly_limit_usd` 列名の経緯、書き込み方式の違いなど）は
+**[docs/admin.md](docs/admin.md)** にまとめています。
+
 ---
 
 # ディレクトリ構成
@@ -98,7 +102,8 @@ shirugpt/
 ├── docs/
 │   ├── architecture.md  仕組みの詳細（処理ループ・SQL ガード・日本語データ）
 │   ├── setup.md         セットアップ手順の詳細
-│   └── security.md       安全機構の一覧・鍵の取り扱い・Gemini へのデータ送信
+│   ├── security.md      安全機構の一覧・鍵の取り扱い・Gemini へのデータ送信
+│   └── admin.md         利用ログ・月次使用制限・管理者ページの仕組み
 └── src/
     ├── config.py       .env の読み込みと検証、鍵ファイルの漏洩チェック
     ├── bq_tools.py     BigQuery ツール 4 種とエラーの日本語化
