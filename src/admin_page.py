@@ -62,6 +62,7 @@ def _rollup(df: pd.DataFrame, unit: str) -> pd.DataFrame:
                 "billed_bytes",
                 "gemini_calls",
                 "bq_queries",
+                "errors",
             ]
         ]
         .sum()
@@ -89,6 +90,7 @@ def _display_frame(grouped: pd.DataFrame) -> pd.DataFrame:
             "クエリ量": grouped["billed_bytes"].map(human_bytes),
             "Gemini呼び出し": grouped["gemini_calls"],
             "クエリ実行": grouped["bq_queries"],
+            "エラー数": grouped["errors"],
         }
     )
     return view

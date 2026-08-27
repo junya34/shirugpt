@@ -384,6 +384,7 @@ class UsageLogger:
                     "billed_bytes",
                     "gemini_calls",
                     "bq_queries",
+                    "errors",
                 ]
             )
 
@@ -396,7 +397,8 @@ class UsageLogger:
               SUM(IFNULL(total_tokens, 0))  AS total_tokens,
               SUM(IFNULL(billed_bytes, 0))  AS billed_bytes,
               COUNTIF(event_type = '{EVENT_GEMINI_CALL}') AS gemini_calls,
-              COUNTIF(event_type = '{EVENT_BQ_QUERY}')    AS bq_queries
+              COUNTIF(event_type = '{EVENT_BQ_QUERY}')    AS bq_queries,
+              COUNTIF(event_type = '{EVENT_ERROR}')       AS errors
             FROM `{self.table_id}`
             WHERE event_time >= TIMESTAMP(@start)
               AND event_time <  TIMESTAMP(DATE_ADD(@end, INTERVAL 1 DAY))
