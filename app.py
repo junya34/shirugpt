@@ -615,7 +615,7 @@ def main() -> None:
         pages.append(
             st.Page(
                 lambda: render_admin_page(settings, usage_logger, user_email),
-                title="利用状況",
+                title="管理",
                 icon="🛠️",
                 url_path="usage",
             )
