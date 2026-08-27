@@ -99,7 +99,42 @@ Gemini トークン代 + BigQuery クエリ代の合計です。`MonthlyUsage.co
 `ADMIN_ALLOW_LOCAL` はローカル開発時のみ認証なしで管理者ページを開ける
 バイパスです。**Streamlit Cloud の Secrets には入れないでください。**
 
-## 5. 既知の制約
+## 5. どこで何が確認できるか
+
+既定のテーブル名は `usage_events` / `user_limits`（+ `user_limits_staging`） /
+`prompt_logs`（`src/config.py`、それぞれ `BQ_LOG_TABLE` / `BQ_LIMIT_TABLE` /
+`BQ_PROMPT_LOG_TABLE` で変更可）です。管理者ページはこのうち集計・課金判断に
+必要な最小限しか見せておらず、それ以外は BigQuery を直接クエリする必要があります。
+
+### 管理者ページ（Streamlit UI、`ADMIN_EMAILS` のみ閲覧可）
+
+**利用状況タブ**（`usage_events` を集計した表示）
+- 期間・集計単位（日別/月別）を指定
+- 利用者×期間ごとの: 入力トークン・出力トークン・合計トークン・推定金額(USD)・
+  クエリ量(バイト)・Gemini呼び出し回数・クエリ実行回数・**エラー数**（合計件数のみ）
+- 期間全体の合計メトリクス（合計トークン・推定金額・クエリ量）
+
+**使用制限タブ**（`user_limits` の読み書き）
+- 利用者ごとの月次上限(USD)、最終更新日時の一覧
+- 全員一括設定・個別編集・保存
+
+### BigQuery を直接見ないとわからないもの
+
+| データ | テーブル | 管理者ページに出ない理由 |
+|---|---|---|
+| **質問文そのもの**（`prompt_text`） | `prompt_logs` | `log_prompt()` で書き込まれるが、`admin_page.py` はどこからも読んでいない |
+| エラーの内訳（`error_source`・`error_code`・`error_text`） | `usage_events`（`event_type='error'`） | 表には合計件数（`COUNTIF`）しか出していない。種類別・内容別に見たいなら SQL で直接見る必要がある |
+| `session_id` / `turn_id` 単位の行 | `usage_events` | 表は利用者×期間で集約済み。1 ターン単位の生ログは出ていない |
+| 使用モデル名（`model`） | `usage_events` | 集計列に含めていない |
+| `thinking_tokens`（思考トークンの内訳） | `usage_events` | 診断用の列で、`output_tokens` 合計にしか反映されない |
+| `user_limits_staging` の中身 | `user_limits_staging` | `save_limits()` の中間テーブル。MERGE 後は本体テーブルしか見せない |
+
+個々の質問内容・エラー詳細・生イベントを調べたいときは、GCP コンソールの
+BigQuery エディタ等で該当テーブルを直接クエリしてください
+（`BQ_LOG_DATASET` は Gemini の allowlist に含まれていないため、
+このアプリのチャット経由では参照できません — [1 章](#1-gemini-境界の外に置く理由)参照）。
+
+## 6. 既知の制約
 
 - 月次の使用制限は、同一アカウントを複数タブ・複数デバイスで**同時に**使った
   場合、判定にわずかな誤差が出ることがあります（各セッションが自分の消費量
